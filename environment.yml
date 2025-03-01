@@ -9,7 +9,6 @@ dependencies:
   - pip:
     - arviz
     - bokeh
-    - conda
     - corner
     - emcee
     - ipython
