@@ -169,7 +169,7 @@ dependencies:
     - python-lsp-server==1.12.2
     - python-slugify==8.0.4
     - pytoolconfig==1.3.1
-    - pytwalk==1.9.0
+    - http://www.cimat.mx/~jac/twalk/pytwalk-1.9.0-py3-none-any.whl
     - pytz==2025.1
     - pyuca==1.2
     - pyxdg==0.28
