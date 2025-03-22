@@ -45,7 +45,6 @@ class SEIR_Model(Epidemic_Model) :
         :return: Solutions (S, E, I, R) in the times t_eval.
         """
         t_span = [t_eval[0], t_eval[-1]]
-        #x = integrate.odeint(self.model, x0, t_eval)
         
         method = 'LSODA' if (self.beta/self.sigma > 100 or self.beta/self.gamma > 100) else 'RK45'
         
@@ -54,7 +53,6 @@ class SEIR_Model(Epidemic_Model) :
             rtol=1e-2, atol=1e-3, max_step=1.0
         )
 
-        #print('*** ', sol['message'])
         return sol['y']
 
     def plot(self, t, x) :

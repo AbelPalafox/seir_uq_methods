@@ -7,9 +7,6 @@ Created on Sat Feb  8 14:45:10 2025
 """
 
 from tqdm import tqdm
-#import emcee
-#import corner
-#import numpy as np
 from .SEIR_mcmc_base import SEIR_mcmc_base
 from .pyhmc import pyhmc
 

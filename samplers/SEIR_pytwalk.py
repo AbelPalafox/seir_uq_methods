@@ -6,12 +6,7 @@ Created on Wed Feb  5 14:33:27 2025
 @author: abel
 """
 from pytwalk import pytwalk
-#from ..epidemic_model.SEIR_Model import SEIR_Model
 from .SEIR_mcmc_base import SEIR_mcmc_base
-#from AnalysisTools import AnalysisTools
-#import scipy
-#import numpy as np
-
 
 # defining the class for the SEIR_twalk model
 class SEIR_pytwalk(pytwalk,SEIR_mcmc_base) :
@@ -24,6 +19,8 @@ class SEIR_pytwalk(pytwalk,SEIR_mcmc_base) :
             self.PriorEnergy = self.PriorBeta
         elif self.prior_model == 'Logarithmic' :
             self.PriorEnergy = self.PriorLogarithmic
+        elif self.prior_model == 'Gamma' :
+            self.PriorEnergy = self.PriorGamma
         else :
             self.PriorEnergy = self.PriorUniform
         
@@ -34,13 +31,12 @@ class SEIR_pytwalk(pytwalk,SEIR_mcmc_base) :
         else :
             super().__init__(self.ndim,k=1,u=self.LikelihoodEnergyGaussian,Supp=self.Supp,w=self.PriorEnergy)
 
-        #self.samples = self.Output
         self.instance = 'pytwalk'
         
     def run(self, T, xp0, xp1) :
         
         # calling the pytwalk run function
-        self.Run(T,xp0,xp1)
+        self.Run(T,xp0,xp1, save_xp=True)
         
         self.nsamples = T
         # put the output in a dataframe

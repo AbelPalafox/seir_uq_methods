@@ -8,17 +8,27 @@ Created on Fri Feb 21 08:34:42 2025
 import torch
 import torch.nn as nn
 from types import MethodType
+from numpy import pi, exp
 
 class PINN(nn.Module):
-    def __init__(self, N_INPUT, N_OUTPUT, N_HIDDEN, N_FLAYERS, compute_eq_loss=None, compute_data_loss=None, compute_cond_loss=None):
+    def __init__(self, N_INPUT, N_OUTPUT, N_HIDDEN, N_FLAYERS, compute_eq_loss=None, compute_data_loss=None, compute_cond_loss=None, RFF=False):
         super().__init__()
-        activation = nn.Tanh
-        #activation = nn.SiLU
-        self.fcs = nn.Sequential(nn.Linear(N_INPUT, N_HIDDEN), activation())
+        
+        if RFF==True:
+            print('Using Random Fourier Features')
+            omega_scale = 1.0
+            nfft = 10
+            self.omega = omega_scale * torch.randn(nfft)  # 16 Fourier features
+            self.b = 2 * pi * torch.rand(nfft)  # Phase shifts aleatorios  
+            N_INPUT = 2*nfft
+        
+        
+        self.RFF = RFF
+        self.fcs = nn.Sequential(nn.Linear(N_INPUT, N_HIDDEN), nn.Tanh())
         self.fch = nn.Sequential(*[
-            nn.Sequential(nn.Linear(N_HIDDEN, N_HIDDEN), activation()) for _ in range(N_FLAYERS - 1)
+            nn.Sequential(nn.Linear(N_HIDDEN, N_HIDDEN), nn.Tanh()) for _ in range(N_FLAYERS - 1)
         ])
-        self.fce = nn.Linear(N_HIDDEN, N_OUTPUT)
+        self.fce = nn.Sequential(nn.Linear(N_HIDDEN, N_OUTPUT), nn.ReLU())
         
         self.args = {}
         '''if not compute_eq_loss == None :
@@ -28,11 +38,28 @@ class PINN(nn.Module):
         if not compute_cond_loss == None :
             self.compute_cond_loss = MethodType(compute_cond_loss, self)'''
 
+        self.apply(self.init_weights)
+        
+
+    def fourier_features(self, t):
+        t = t.view(-1, 1)
+        phi = torch.cat([torch.sin(self.omega * t + self.b), torch.cos(self.omega * t + self.b)], dim=1)
+        return phi
+
+
+    def init_weights(self, m) :
+        if isinstance(m, nn.Linear):
+            nn.init.xavier_uniform_(m.weight)  # Xavier uniforme
+            if m.bias is not None:
+                nn.init.uniform_(m.bias,a=0.01, b=0.2)  # Sesgos inicializados en 0  
+
     def forward(self, x):
+        if self.RFF :
+            x = self.fourier_features(x)
         x = self.fcs(x)
         x = self.fch(x)
         x = self.fce(x)
-        return x
+        return x  
 
     def train(self, t, data, lr=1e-3, epochs=100000, params=[], status=1000, **kwargs) :
         
@@ -40,36 +67,221 @@ class PINN(nn.Module):
         lambda_data = self.args['lambda_data']
         lambda_cond = self.args['lambda_cond']
         lambda_eq = self.args['lambda_eq']
+        optim = self.args['optim']        
+        #tensor_params = [torch.tensor(i, requires_grad=True) for i in params]
         
-        tensor_params = [torch.tensor(i, requires_grad=True) for i in params]
-        
-        optimizer = torch.optim.Adam(list(self.parameters()) + tensor_params, lr=lr)
+        self.data_losses = []
+        self.cond_losses = []
+        self.eq_losses = []
+        self.params_track = []
 
-        #t = torch.tensor(t_).requires_grad_(True)
-        
-        for i in range(epochs) :
+        if optim == 'Adam' :
+            #optimizer = torch.optim.Adam(list(self.parameters()) + params, lr=lr)
+            #optimizer = torch.optim.Adam(self.parameters(), lr=lr)  # Tasa de aprendizaje para los pesos
+            optimizer = torch.optim.Adam([
+                    {'params': self.fcs.parameters(), 'lr': lr},  # Pesos de la red
+                    {'params': self.fch.parameters(), 'lr': lr},
+                    {'params': self.fce.parameters(), 'lr': lr},
+                    {'params': params, 'lr': lr*1}  # Parámetros del modelo SEIR
+                ])
             
-            optimizer.zero_grad()
-            
-            y_pred = self.forward(t)
-            
-            eq_loss, dsystem_dt = self.compute_eq_loss(y_pred, t, tensor_params)
-            
-            #y_pred = self.forward(t)
-            data_loss = self.compute_data_loss(y_pred, data)
-            
-            cond_loss = self.compute_cond_loss(y_pred)
-            
-            loss = lambda_eq*eq_loss + lambda_data*data_loss + lambda_cond*cond_loss
-        
-            loss.backward()
-            optimizer.step()
-             
-            if i % status == 0:
-                #print(f"Iteración {i}: Pérdida = {loss.item():.6f}, {[_.item() for _ in tensor_params]}")
-                print(f"Iteración {i}: Pérdida = {loss.item():.3g}, eq: {eq_loss.item():.3g}, data: {data_loss.item():.3g}, cond: {cond_loss.item():.3g}, {[torch.exp(_).item() for _ in tensor_params]}")
 
-        return [i.item() for i in tensor_params]
+            for i in range(epochs) :
+                
+                '''if i < 20000 :
+                    lambda_eq = 0
+                    lambda_data = 1e6
+                elif i < 30000 :
+                    lambda_eq = 1e-2
+                    lambda_data = 1e6
+                else :
+                    lambda_eq = 1e0
+                    lambda_data = 1e6'''
+                
+                optimizer.zero_grad()
+                
+                y_pred = self.forward(t)
+                
+                eq_loss, dsystem_dt = self.compute_eq_loss(y_pred, t)
+                
+                #y_pred = self.forward(t)
+                data_loss = self.compute_data_loss(y_pred, data, t)
+                
+                cond_loss = self.compute_cond_loss(y_pred)
+                
+                lambda_eq_annealing = lambda_eq * (1 + i / epochs)
+                #lambda_data_annealing = lambda_data * torch.exp(torch.tensor(i / epochs))
+                
+                loss = lambda_eq_annealing*eq_loss + lambda_data*data_loss + lambda_cond*cond_loss
+
+                self.data_losses.append(data_loss.item())
+                self.cond_losses.append(cond_loss.item())
+                self.eq_losses.append(eq_loss.item())
+                self.params_track.append([_.item() for _ in params])
+            
+                #if i % status == 0:
+                #    eq_loss.backward(retain_graph=True)
+                #    print("Gradientes:")
+                #    for name, param in self.named_parameters():
+                #        if param.grad is not None:
+                #            print(name, param.grad.norm().item())
+                #        else:
+                #            print(name, "Gradiente NULO")
+                    
+                loss.backward()
+
+                self.scale_gradients()
+
+                optimizer.step()
+                 
+                if i % status == 0:
+                    #print(f"Iteración {i}: Pérdida = {loss.item():.6f}, {[_.item() for _ in tensor_params]}")
+                    print(f"Iteración {i}: Pérdida = {loss.item():.3g}, eq: {eq_loss.item():.3g}, data: {data_loss.item():.3g}, cond: {cond_loss.item():.3g}, {[torch.exp(_).item() for _ in params]}")
+                    
+                    
+                #if i % status == 0 :
+                #    print('noising the parameters')
+                #    for param in params :
+                #        param.data += 1e-1 * torch.randn_like(param) * exp(-i / epochs)
+
+        elif optim == 'LBFGS' :
+            # using the LBFGS optimizer
+            #optimizer = torch.optim.LBFGS(list(self.parameters()) + params, lr=lr, max_iter=20, history_size=50)
+            optimizer = torch.optim.LBFGS(self.parameters(), lr=lr, line_search_fn='strong_wolfe')
+            
+            def closure():
+                optimizer.zero_grad()
+                
+                y_pred = self.forward(t)
+                
+                #print('1 : ',t.requires_grad, t.grad_fn)
+                eq_loss, dsystem_dt = self.compute_eq_loss(y_pred, t)
+                #print('2 : ',t.requires_grad, t.grad_fn)
+                data_loss = self.compute_data_loss(y_pred, data, t)
+                #print('3 : ',t.requires_grad, t.grad_fn)
+                cond_loss = self.compute_cond_loss(y_pred)
+                
+                loss = lambda_eq*eq_loss + lambda_data*data_loss + lambda_cond*cond_loss
+            
+                self.data_losses.append(data_loss.item())
+                self.cond_losses.append(cond_loss.item())
+                self.eq_losses.append(eq_loss.item())
+                self.params_track.append([_.item() for _ in params])
+
+                loss.backward()
+                return loss
+            
+            for i in range(epochs) :
+                
+                optimizer.step(closure)
+                
+                if i % status == 0 :
+                    
+                    y_pred = self.forward(t)
+                    #print('4 : ', t.requires_grad, t.grad_fn)
+                    eq_loss, dsystem_dt = self.compute_eq_loss(y_pred, t)
+                    #print('5 : ', t.requires_grad, t.grad_fn)
+                    data_loss = self.compute_data_loss(y_pred, data, t)
+                    #print('6 : ', t.requires_grad, t.grad_fn)
+                    cond_loss = self.compute_cond_loss(y_pred)
+                    
+                    lambda_data_annealing = lambda_data * (1 + i / epochs)
+                    
+                    loss = lambda_eq*eq_loss + lambda_data*data_loss + lambda_cond*cond_loss
+
+                    if i % status == 0:
+                        eq_loss.backward(retain_graph=True)
+                        print("Gradientes:")
+                        for name, param in self.named_parameters():
+                            if param.grad is not None:
+                                print(name, param.grad.norm().item())
+                            else:
+                                print(name, "Gradiente NULO")
+
+                    print(f"Iteración {i}: Pérdida = {loss.item():.3g}, eq: {eq_loss.item():.3g}, data: {data_loss.item():.3g}, cond: {cond_loss.item():.3g}, {[torch.exp(_).item() for _ in params]}")
+
+    
+        else :
+            
+            total_epochs = epochs 
+            epochs = epochs//2
+            
+            optimizer = torch.optim.Adam(list(self.parameters()) + params, lr=lr)
+            print('Starting Adam phase')
+            for i in range(epochs) :
+                
+                optimizer.zero_grad()
+                
+                y_pred = self.forward(t)
+                
+                eq_loss, dsystem_dt = self.compute_eq_loss(y_pred, t)
+                
+                #y_pred = self.forward(t)
+                data_loss = self.compute_data_loss(y_pred, data, t)
+                
+                cond_loss = self.compute_cond_loss(y_pred)
+                
+                lambda_data_annealing = lambda_data * (1 + i / epochs)
+                #lambda_data_annealing = lambda_data * torch.exp(torch.tensor(i / epochs))
+                
+                loss = lambda_eq*eq_loss + lambda_data_annealing*data_loss + lambda_cond*cond_loss
+            
+                loss.backward()
+                optimizer.step()
+                 
+                if i % status == 0:
+                    #print(f"Iteración {i}: Pérdida = {loss.item():.6f}, {[_.item() for _ in tensor_params]}")
+                    print(f"Iteración {i}: Pérdida = {loss.item():.3g}, eq: {eq_loss.item():.3g}, data: {data_loss.item():.3g}, cond: {cond_loss.item():.3g}, {[torch.exp(_).item() for _ in params]}")
+                    
+                if i % status == 0 :
+                    print('noising the parameters')
+                    for param in params :
+                        param.data += 1e-1 * torch.randn_like(param) * exp(-i / epochs)            
+ 
+            # using the LBFGS optimizer
+            optimizer = torch.optim.LBFGS(list(self.parameters()) + params, lr=lr, max_iter=20, history_size=50)
+            
+            def closure():
+                optimizer.zero_grad()
+                
+                y_pred = self.forward(t)
+                
+                #print('1 : ',t.requires_grad, t.grad_fn)
+                eq_loss, dsystem_dt = self.compute_eq_loss(y_pred, t)
+                #print('2 : ',t.requires_grad, t.grad_fn)
+                data_loss = self.compute_data_loss(y_pred, data, t)
+                #print('3 : ',t.requires_grad, t.grad_fn)
+                cond_loss = self.compute_cond_loss(y_pred)
+                
+                lambda_data_annealing = lambda_data * (1 + i / epochs)
+                
+                loss = lambda_eq*eq_loss + lambda_data_annealing*data_loss + lambda_cond*cond_loss
+            
+                loss.backward()
+                return loss
+            
+            epochs = total_epochs - epochs
+            print('Starting LBFGS phase')
+            for i in range(epochs) :
+                
+                optimizer.step(closure)
+                
+                if i % status == 0 :
+                    
+                    y_pred = self.forward(t)
+                    #print('4 : ', t.requires_grad, t.grad_fn)
+                    eq_loss, dsystem_dt = self.compute_eq_loss(y_pred, t)
+                    #print('5 : ', t.requires_grad, t.grad_fn)
+                    data_loss = self.compute_data_loss(y_pred, data, t)
+                    #print('6 : ', t.requires_grad, t.grad_fn)
+                    cond_loss = self.compute_cond_loss(y_pred)
+                    
+                    loss = lambda_eq*eq_loss + lambda_data_annealing*data_loss + lambda_cond*cond_loss
+            
+                    print(f"Iteración {i}: Pérdida = {loss.item():.3g}, eq: {eq_loss.item():.3g}, data: {data_loss.item():.3g}, cond: {cond_loss.item():.3g}, {[torch.exp(_).item() for _ in params]}")
+           
+ 
+        return params #[i.item() for i in params]
 
 
 if __name__ == '__main__' :

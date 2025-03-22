@@ -21,26 +21,7 @@ class BNN :
         self.model = pinn_model(n_input, n_output, n_hidden, n_flayers)
         self.args = kwargs
         self.call_counter = 0
-        '''self.params = kwargs['params']
-        self.nparams = len(self.params)
-        
-        flat_params, shapes = self.get_params_vector()
-        self.ndim = len(flat_params) + self.nparams
-        self.shapes = shapes
-        
-        self.sampler_name = sampler
-        if sampler=='twalk' :
-            self.sampler = pytwalk(self.ndim, k=1, w=self.likelihood, Supp=self.support, u=self.prior)
-                
-        elif sampler=='emcee' :
-            self.nwalkers = self.args['nwalkers']
-            self.sampler = emcee.EnsembleSampler(self.nwalkers, self.ndim, self.lnprob)
-        elif sampler=='pyhmc' :
-            self.sampler = pyhmc(self.likelihood,self.prior,self.support,**kwargs)
-        else :
-            print('sampler must be one of available')
-            return
-        '''
+
         return 
     
     def set_weights(self, weights) :
@@ -75,7 +56,6 @@ class BNN :
     def likelihood(self, theta_) :
         
         t = torch.tensor(self.args['t'], dtype=torch.float32).view(-1, 1)
-        #tensor_params = self.args['tensor_params']
         data = torch.tensor(self.args['data'], dtype=torch.float32).view(-1, 1)
         lambda_data = self.args['lambda_data']
         lambda_cond = self.args['lambda_cond']
@@ -100,7 +80,6 @@ class BNN :
         cond_loss = self.model.compute_cond_loss(model_prediction)
     
         loss = lambda_eq*eq_loss + lambda_data*data_loss + lambda_cond*cond_loss
-        #print('** ', (lambda_eq*eq_loss).item(), (lambda_data*data_loss).item(), (lambda_cond*cond_loss).item())
         
         # restoring the current weights
         self.model.load_state_dict(original_weights)
@@ -119,19 +98,17 @@ class BNN :
         for param in theta :
             log_p += 0.5*torch.sum(param**2) / (sigma**2)
         
-        #for param in params :
-        #    log_p += -0.5*torch.sum(torch.exp(param)**2) / (sigma**2)
-        
         ## evaluando la prior para los parámetros del modelo SEIR
         log_beta, log_sigma, log_gamma = params
         
         # Media y desviación estándar de las priors normales
-        mu_beta, sigma_beta = np.log(0.5), 0.5*1e-4
-        mu_sigma, sigma_sigma = np.log(0.5), 0.4*1e-4
-        mu_gamma, sigma_gamma = np.log(0.3), 0.3*1e-4
+        mu_beta, sigma_beta = np.log(self.args['mu_prior_beta']), self.args['sigma_prior_beta']
+        mu_sigma, sigma_sigma = np.log(self.args['mu_prior_sigma']), self.args['sigma_prior_sigma']
+        mu_gamma, sigma_gamma = np.log(self.args['mu_prior_gamma']), self.args['sigma_prior_gamma']
+        
+        
     
         # Evaluación del logaritmo de la prior
-        #log_p = 0.0
         log_p += 0.5 * torch.sum((log_beta - mu_beta) ** 2) / (sigma_beta ** 2)
         log_p += 0.5 * torch.sum((log_sigma - mu_sigma) ** 2) / (sigma_sigma ** 2)
         log_p += 0.5 * torch.sum((log_gamma - mu_gamma) ** 2) / (sigma_gamma ** 2)
@@ -144,7 +121,6 @@ class BNN :
         
     def support(self, theta_) :
         
-        #theta = theta_[:-self.nparams]
         params = torch.tensor(theta_[-self.nparams:])
         
         bounds = self.args['bounds']
@@ -165,12 +141,14 @@ class BNN :
         
         loss_likelihood = self.likelihood(theta_)
         loss_prior = self.prior(theta_)
-        #print(f'loss: {loss} ')
         
         loss = -(loss_likelihood + loss_prior)
-        if self.call_counter % 100 == 0:
+        if self.call_counter % 1000 == 0:
             print(f'loss: {loss:.6g}, {loss_likelihood:.6g}, {loss_prior:.6g} ')
         self.call_counter += 1
+        
+        if np.isnan(loss) :
+            print(f'loss: {loss:.6g}, {loss_likelihood:.6g}, {loss_prior:.6g} ')
         
         return loss
     
@@ -246,38 +224,4 @@ class BNN :
     
         return
     
-        '''
-        self.sampler_name = sampler
-        if sampler=='twalk' :
-            self.sampler = pytwalk(self.ndim, k=1, w=self.likelihood, Supp=self.support, u=self.prior)
-                
-        elif sampler=='emcee' :
-            self.nwalkers = self.args['nwalkers']
-            self.sampler = emcee.EnsembleSampler(self.nwalkers, self.ndim, self.lnprob)
-        elif sampler=='pyhmc' :
-            self.sampler = pyhmc(self.likelihood,self.prior,self.support,**kwargs)
-        else :
-            print('sampler must be one of available')
-            return
-        
-        
-        if self.sampler_name == 'emcee' :
-        
-            self.sampler.run(num_iterations, current_weights)
-            self.Output = self.sampler.get_chain()
-            
-        elif self.sampler_name == 'twalk' :
-            
-            xp0 = current_weights
-            xp1 = current_weights + np.random.normal(0,1,len(current_weights))
-            self.sampler.Run(num_iterations, xp0, xp1)
-            
-            self.Output = self.sampler.Output
-
-        else :
-            
-            self.Run(num_iterations, current_weights)
-            self.Output = self.sampler.Output
-            
-        return'''
         

@@ -19,7 +19,7 @@ class SEIR_emcee(SEIR_mcmc_base) :
         
         self.nwalkers = kwargs['nwalkers']
         self.ndim = kwargs['ndim']
-        print(self.nwalkers, self.ndim)
+        
         self.sampler = emcee.EnsembleSampler(self.nwalkers, 
                                              self.ndim, 
                                              self.lnprob,
@@ -29,19 +29,19 @@ class SEIR_emcee(SEIR_mcmc_base) :
                                                 ])
         
         self.instance = 'emcee'
+        print('Incidency will be computed using method: ', self.params['inc_method'])
 
         
     def lnprob(self, theta) :
         
         
         if not self.Supp(theta) :
-            #print('Out of support!')
             return -np.inf
         
         if self.likelihood_model == 'Poisson' :
             lnlike = self.LikelihoodEnergyPoisson(theta)
         elif self.likelihood_model == 'NegBinomial' :
-            lnlike = self.LikelihoodEnergyNegBinom
+            lnlike = self.LikelihoodEnergyNegBinom(theta)
         else :
             lnlike = self.LikelihoodEnergyGaussian(theta)
         
@@ -49,15 +49,14 @@ class SEIR_emcee(SEIR_mcmc_base) :
             lnprior = self.PriorBeta(theta)
         elif self.prior_model == 'Logarithmic' :
             lnprior = self.PriorLogarithmic(theta)
+        elif self.prior_model == 'Gamma' :
+            lnprior = self.PriorGamma(theta)
         else :
             lnprior = self.PriorUniform(theta)
             
-        #lnprior = self.PriorEnergy(theta)
-        print(-(lnlike + lnprior))
         return -(lnlike + lnprior)
     
     def run(self, T, theta_0) :
-        #print(theta_0)
         
         self.nsamples = T 
         with tqdm(total=T) as pbar:

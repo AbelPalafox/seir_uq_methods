@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
 from .AnalysisTools import AnalysisTools
-
-__all__ = ['AnalysisTools']
+from .utils import Normalizer
+__all__ = ['AnalysisTools', 'Normalizer']
 

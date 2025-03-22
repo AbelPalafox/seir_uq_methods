@@ -13,7 +13,6 @@ from utils.AnalysisTools import AnalysisTools
 import scipy.special as sp
 import matplotlib.pyplot as plt
 
-counter = 0
 class SEIR_mcmc_base(AnalysisTools) :
 
     def __init__(self, *argv, **kwargs) :
@@ -38,11 +37,8 @@ class SEIR_mcmc_base(AnalysisTools) :
         self.labels = kwargs['labels']
         self.params = kwargs
         
+    def forward_map(self, theta) : 
 
-    def LikelihoodEnergyPoisson(self, theta) :
-        
-        #print('evaluating likelihood poisson')
-        
         N = self.N
         t = self.time
                 
@@ -50,74 +46,66 @@ class SEIR_mcmc_base(AnalysisTools) :
         
         seir_model = SEIR_Model(beta,sigma,gamma,N)
         
-        delta_t = t[1] - t[0]
-        x = seir_model.run(self.x0,t)
+        x0 = []
+
+        if self.params['init_cond'] == 'fixed' :
+            x0 = self.x0
+        elif self.params['init_cond'] == 'estimated' :
+            s0, e0, I0, r0 = self.x0
+            k = ((1+gamma)*self.data[1] - self.data[0])/sigma
+            E1 = (sigma*k + gamma*I0 + self.data[0])/sigma
+            E0 = E1-k
+            R0 = gamma*self.data[1]
+
+            S0 = N - E0 - I0 - R0
+            x0 = [S0,E0,I0,R0]
+        else :
+            print('Warning: initial condition not defined. Using default')
+            x0 = self.x0
+
+        x = seir_model.run(x0,t)
         
         S, E, I, R = x[:]
 
-        incidency = -seir_model.incidency(np.hstack([[N],S]),t,1)
+        if self.params['inc_method'] == 'susceptible' :
+            incidency = -seir_model.incidency(np.hstack([[N],S]),t,1,method='susceptible')
+        else :
+            incidency = seir_model.incidency([E,I],t,1,method='exposed',sigma=sigma,gamma=gamma)
+
+        return incidency
+
+    def LikelihoodEnergyPoisson(self, theta) :
+
+        incidency = self.forward_map(theta)
         
         epsilon = 1e-8 ## numerical regularization to avoid log 0
-        #p_i = -incidency + self.data[:-1]*np.log(np.abs(incidency))
         
         if (incidency < 0).any() :
             incidency = np.maximum(incidency, 0)
-            print('Warning: negative incidency')
         
-        # computing scaling constant for avoid the chain gets stucked
-        C = np.sum(self.data) / np.sum(incidency)
-        
-        p_i = C*incidency - self.data*np.log(C*incidency + epsilon)
-        global counter 
-        
-        #if counter %100 :
-        #    print(np.sum(p_i))
-        counter += 1
+        p_i = incidency - self.data*np.log(incidency + epsilon)
+
+        if np.isnan(np.sum(p_i)) :
+            print('Warning: nan values')   
+
         return np.sum(p_i)
     
     def LikelihoodEnergyGaussian(self,theta) :
         
-        #print('evaluating likelihood gaussian')
-        N = self.N
-        t = self.time
-                
-        beta, sigma, gamma = theta
-                
-        seir_model = SEIR_Model(beta,sigma,gamma,N)
-        x = seir_model.run(self.x0,t)
+        incidency = self.forward_map(theta)
         
-        S, E, I, R = x[:]
-        
-        incidency = -seir_model.incidency(np.hstack([[N],S]),t,1)
-        
-        #plt.figure()
-        #plt.plot(incidency, label='incidency')
-        #plt.plot(self.data, label='data')
-        #plt.legend()
-        #plt.grid()
-        #plt.show()
-        
-        # assuming 
         val = (np.linalg.norm(incidency-self.data)**2) 
            
         return val
     
     def LikelihoodEnergyNegBinom(self,theta) :
-                
+        print('Warning. This has not been tested yet!')
         data = self.data
-        N = self.N
-        t = self.time
+
         p_negbinom = self.params['p_negbinom']        
         
-        beta, sigma, gamma = theta
-                
-        seir_model = SEIR_Model(beta,sigma,gamma,N)
-        x = seir_model.run(self.x0,t)
-        
-        S, E, I, R = x[:]
-        
-        incidency = -seir_model.incidency(np.hstack([[N],S]),t,1)
-        
+        incidency = self.forward_map(theta)
+
         mu = np.round(incidency)
         
         p = mu / (mu + theta)
@@ -125,14 +113,9 @@ class SEIR_mcmc_base(AnalysisTools) :
         
         logL = -np.sum(log_binom + p_negbinom*np.log(1-p) + data*np.log(p))
         
-        #log_binomial_coeff = gammaln(data + incidency) - gammaln(incidency) - gammaln(data+1)
-        
-        #logL = np.sum(log_binomial_coeff + incidency * np.log(p) + data*np.log(1-p))
-        
         return logL
     
     def PriorBeta(self,theta) :
-        #print('evaluating prior***')
         
         beta, sigma, gamma = theta
         
@@ -172,6 +155,23 @@ class SEIR_mcmc_base(AnalysisTools) :
         
         return -0.5*np.sum(theta**2) + np.sum(theta)
     
+    def PriorGamma(self, theta) :
+
+        beta, sigma, gamma = theta
+
+        shape_beta_prior = self.params['shape_beta_prior']
+        shape_sigma_prior = self.params['shape_sigma_prior']
+        shape_gamma_prior = self.params['shape_gamma_prior']
+        scale_beta_prior = self.params['scale_beta_prior']
+        scale_sigma_prior = self.params['scale_sigma_prior']
+        scale_gamma_prior = self.params['scale_gamma_prior']
+
+        log_pri_beta = scipy.stats.gamma.logpdf(beta,shape_beta_prior,scale=scale_beta_prior)
+        log_pri_sigma = scipy.stats.gamma.logpdf(sigma,shape_sigma_prior,scale=scale_sigma_prior)
+        log_pri_gamma = scipy.stats.gamma.logpdf(gamma,shape_gamma_prior,scale=scale_gamma_prior)
+
+        return (float(log_pri_beta+log_pri_sigma+log_pri_gamma))
+    
     def Supp(self, theta) :
     
         beta, sigma, gamma = theta
@@ -184,35 +184,57 @@ class SEIR_mcmc_base(AnalysisTools) :
         gamma_max = self.params['gamma_max'] 
 
         if beta < beta_min :
-            #print('*')
             return False
         
         if beta > beta_max :
-            #print('**')
             return False
         
         if sigma < sigma_min :
-            #print('-')
             return False
         
         if sigma > sigma_max :
-            #print('--')
             return False
         
         if gamma < gamma_min :
-            #print('#')
             return False
         
         if gamma > gamma_max :
-            #print('##')
             return False
-        
-        # if (theta <= 0).any() :
-        #     return False
-            
-        # if (theta > 1).any() :
-        #     return False
-        
+
         return True
     
 
+    def get_prior_sample(self, n) :
+
+        print(f'Generating {n} prior samples. Prior model: {self.prior_model}')
+
+        prior_curves = {}
+        if self.prior_model == 'Beta' :
+
+            for label in self.labels :
+                _min = self.params[f'{label}_min']
+                _max = self.params[f'{label}_max']
+                alpha_prior = self.params[f'alpha_{label}_prior']
+                beta_prior = self.params[f'beta_{label}_prior']
+                                
+                prior_curves[label] = scipy.stats.beta.rvs(alpha_prior, beta_prior, size=n)
+
+        elif self.prior_model == 'Uniform': 
+            
+            for label in self.labels :
+                _min = self.params[f'{label}_min']
+                _max = self.params[f'{label}_max']
+                
+                prior_curves[label] = scipy.stats.uniform.rvs(loc=_min, scale=_max-_min, size=n)
+                
+        elif self.prior_model == 'Gamma' :
+
+            for label in self.labels :
+                _min = self.params[f'{label}_min']
+                _max = self.params[f'{label}_max']
+                shape_prior = self.params[f'shape_{label}_prior']
+                scale_prior = self.params[f'scale_{label}_prior']
+                
+                prior_curves[label] = scipy.stats.gamma.rvs(shape_prior, scale=scale_prior, size=n)
+
+        return prior_curves

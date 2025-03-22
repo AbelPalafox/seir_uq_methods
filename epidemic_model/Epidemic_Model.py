@@ -1,5 +1,5 @@
 
-from numpy import roll
+from numpy import roll, maximum
 import matplotlib.pyplot as plt
 
 class Epidemic_Model :
@@ -8,18 +8,18 @@ class Epidemic_Model :
     
         self.labels = []
         
-    def incidency(self,I,t,timestep,regular=True) :
+    def incidency(self,P,t,timestep,method='susceptible', **kwargs) :
         """
         Computes the incidence for the infectous population, given at times t, after timestep time.
         Times when infectous are reported could be not evenly spaced (regular).
-        :param I: Infectous at times t.
+        :param P: Population at times t.
         :param t: times when infectous are given.
         :param timestep: time interval to report the incidence.
-        :param regular: flag to indicate whether reporting times are evenly spaced.
+        :param method: method to compute the incidence. Options are 'susceptible' and 'infectous'.
         :return: Incidency 
         """
         
-        if regular :
+        if method == 'susceptible' :
         
             delta_t = t[1] - t[0]
             if timestep < delta_t :
@@ -30,27 +30,34 @@ class Epidemic_Model :
                 print("Warning: timestep is not multiple of the reporting time.")
                 
             step = int(timestep // delta_t)
-            I_timestep = roll(I,-step)
-            inc = (I_timestep - I)[::step]
+            P_timestep = roll(P,-step)
+            inc = (P_timestep - P)[::step]
         
-        return inc[:-1]
-        '''
+            return maximum(inc[:-1],0)
+    
+        elif method == 'exposed' :
+        
+            delta_t = t[1] - t[0]
+            if timestep < delta_t :
+                print(f"Warning: timestep is lower than the reporting times. timestep will be considered as {delta_t}")
+                timestep = delta_t
+                
+            if timestep % delta_t != 0 :
+                print("Warning: timestep is not multiple of the reporting time.")
+                
+            step = int(timestep // delta_t)
+            E, I = P
+            sigma = kwargs['sigma']
+            gamma = kwargs['gamma']
+
+            inc = sigma*E - gamma*I
+
+            return maximum(inc,0)
+        
         else :
+            print("Warning: method not implemented.")
+            return None
         
-            ### in progress.....
-            t0, t1 = t[0], t[-1]
-            curr_time = t[0]
-            curr_index = 0
-            inc = []
-            I0 = I[0]
-            
-            while curr_time < t1 :
-            
-                i = curr_index
-                t_i = 0
-                while t_i < timestep :
-                    t_i
-        '''    
         
     def plot(self, t, x, **kwargs) :
         """

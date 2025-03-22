@@ -35,3 +35,16 @@ def parser(fname) :
             params[key.strip()] = cast_value(val.strip())
             
     return params
+
+class Normalizer :
+    
+    def __init__(self, min_val, max_val) :
+        
+        self.min = min_val
+        self.max = max_val
+        
+    def normalize(self, x) :
+        return (x - self.min) / (self.max - self.min + 1e-8)  # 1e-8 para evitar divisiones por cero
+        
+    def denormalize(self, x) :
+        return x * (self.max - self.min) + self.min
