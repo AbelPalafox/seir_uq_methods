@@ -55,11 +55,12 @@ model = SEIR_PINN(RFF=False)
 beta, sigma, gamma = model.run(times,
                                data,
                                x0,
-                               params_0 = [0.5, 0.35, 0.15],
+                               params_0 = [],
                                #params_0 = [-0.00020526449952740222, -0.011816229671239853, 0.0008839285583235323],
                                epochs=50000,
                                lr=1e-3,
-                               N=N)
+                               N=N, inc_method='susceptible', likelihood='Poisson', init_cond='fixed')
+
 
 
 plt.figure()
@@ -93,19 +94,19 @@ plt.show()
 print(beta, sigma, gamma)
 #beta, sigma, gamma = [0.4910216478152676, 0.2800019137444663, 0.22897669226675946]
 #beta, sigma, gamma = [0.4976092079426683, 0.16907448091279353, 0.18131287897970613]
-seir = SEIR_Model(beta, sigma, gamma, N)
+seir = SEIR_Model(beta*N, sigma*N, gamma*N, N)
 
 x = seir.run(x0, times)
 
-incidency = -seir.incidency(np.hstack([[N],x[0,:]]),times,1)
+incidency = -seir.incidency(np.hstack([[N],x[0,:]]),times,1,method='susceptible')
 
 #seir.plot(times,x)
 plt.figure()
 plt.plot(times, data, label='Datos')
 plt.plot(times,incidency, label='incidency')
 #plt.plot(times, x[2,:], 'g', label='Estimación Exp')
-#plt.plot(times, x[1,:], 'r', label='Estimación Inf')
-#plt.plot(times, x[0,:], 'steelblue', label='Estimación S')
+plt.plot(times, x[1,:], 'r', label='Estimación Inf')
+plt.plot(times, x[0,:], 'steelblue', label='Estimación S')
 #plt.plot(times, x[3,:], 'k', label='Estimación R')
 plt.title('odeint sol vs Data')
 plt.grid()
@@ -118,10 +119,10 @@ y_pred = model.forward(times_tensor)
 
 S_pred_denormalized = model.normalizer.denormalize(y_pred[:,0])
 
-incidency = model.compute_incidency(S_pred_denormalized, N)
+incidency = -model.compute_incidency(S_pred_denormalized, N)
 
 plt.plot(times, data, label='Data')
-#plt.plot(times,N*y_pred[:,0], label='susceptible')
+plt.plot(times,N*y_pred[:,0], label='susceptible')
 #plt.plot(times,N*y_pred[:,1], label='exposed')
 #plt.plot(times,N*y_pred[:,2], label='infected')
 with torch.no_grad() :
