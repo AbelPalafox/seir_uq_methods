@@ -33,7 +33,7 @@ class Epidemic_Model :
             P_timestep = roll(P,-step)
             inc = (P_timestep - P)[::step]
         
-            return maximum(inc[:-1],0)
+            return inc[:-1]
     
         elif method == 'exposed' :
         
@@ -52,7 +52,7 @@ class Epidemic_Model :
 
             inc = sigma*E - gamma*I
 
-            return maximum(inc,0)
+            return inc
         
         else :
             print("Warning: method not implemented.")

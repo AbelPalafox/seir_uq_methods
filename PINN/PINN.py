@@ -28,7 +28,7 @@ class PINN(nn.Module):
         self.fch = nn.Sequential(*[
             nn.Sequential(nn.Linear(N_HIDDEN, N_HIDDEN), nn.Tanh()) for _ in range(N_FLAYERS - 1)
         ])
-        self.fce = nn.Sequential(nn.Linear(N_HIDDEN, N_OUTPUT), nn.ReLU())
+        self.fce = nn.Sequential(nn.Linear(N_HIDDEN, N_OUTPUT), nn.Softplus())
         
         self.args = {}
         '''if not compute_eq_loss == None :
@@ -82,7 +82,7 @@ class PINN(nn.Module):
                     {'params': self.fcs.parameters(), 'lr': lr},  # Pesos de la red
                     {'params': self.fch.parameters(), 'lr': lr},
                     {'params': self.fce.parameters(), 'lr': lr},
-                    {'params': params, 'lr': lr*1}  # Parámetros del modelo SEIR
+                    {'params': params, 'lr': lr}  # Parámetros del modelo SEIR
                 ])
             
 
@@ -107,19 +107,19 @@ class PINN(nn.Module):
                 #y_pred = self.forward(t)
                 data_loss = self.compute_data_loss(y_pred, data, t)
                 
-                cond_loss = self.compute_cond_loss(y_pred)
+                cond_loss = self.compute_cond_loss(y_pred, data)
                 
                 lambda_eq_annealing = lambda_eq * (1 + i / epochs)
                 #lambda_data_annealing = lambda_data * torch.exp(torch.tensor(i / epochs))
                 
-                loss = lambda_eq_annealing*eq_loss + lambda_data*data_loss + lambda_cond*cond_loss
+                loss = lambda_eq*eq_loss + lambda_data*data_loss + lambda_cond*cond_loss
 
                 self.data_losses.append(data_loss.item())
                 self.cond_losses.append(cond_loss.item())
                 self.eq_losses.append(eq_loss.item())
                 self.params_track.append([_.item() for _ in params])
             
-                #if i % status == 0:
+                # if i % status == 0:
                 #    eq_loss.backward(retain_graph=True)
                 #    print("Gradientes:")
                 #    for name, param in self.named_parameters():
@@ -130,9 +130,11 @@ class PINN(nn.Module):
                     
                 loss.backward()
 
-                self.scale_gradients()
+                #self.scale_gradients()
 
                 optimizer.step()
+
+                #self.clamp_params()
                  
                 if i % status == 0:
                     #print(f"Iteración {i}: Pérdida = {loss.item():.6f}, {[_.item() for _ in tensor_params]}")
@@ -159,7 +161,7 @@ class PINN(nn.Module):
                 #print('2 : ',t.requires_grad, t.grad_fn)
                 data_loss = self.compute_data_loss(y_pred, data, t)
                 #print('3 : ',t.requires_grad, t.grad_fn)
-                cond_loss = self.compute_cond_loss(y_pred)
+                cond_loss = self.compute_cond_loss(y_pred, data)
                 
                 loss = lambda_eq*eq_loss + lambda_data*data_loss + lambda_cond*cond_loss
             
@@ -183,7 +185,7 @@ class PINN(nn.Module):
                     #print('5 : ', t.requires_grad, t.grad_fn)
                     data_loss = self.compute_data_loss(y_pred, data, t)
                     #print('6 : ', t.requires_grad, t.grad_fn)
-                    cond_loss = self.compute_cond_loss(y_pred)
+                    cond_loss = self.compute_cond_loss(y_pred, data)
                     
                     lambda_data_annealing = lambda_data * (1 + i / epochs)
                     
@@ -219,7 +221,7 @@ class PINN(nn.Module):
                 #y_pred = self.forward(t)
                 data_loss = self.compute_data_loss(y_pred, data, t)
                 
-                cond_loss = self.compute_cond_loss(y_pred)
+                cond_loss = self.compute_cond_loss(y_pred, data)
                 
                 lambda_data_annealing = lambda_data * (1 + i / epochs)
                 #lambda_data_annealing = lambda_data * torch.exp(torch.tensor(i / epochs))
@@ -251,7 +253,7 @@ class PINN(nn.Module):
                 #print('2 : ',t.requires_grad, t.grad_fn)
                 data_loss = self.compute_data_loss(y_pred, data, t)
                 #print('3 : ',t.requires_grad, t.grad_fn)
-                cond_loss = self.compute_cond_loss(y_pred)
+                cond_loss = self.compute_cond_loss(y_pred, data)
                 
                 lambda_data_annealing = lambda_data * (1 + i / epochs)
                 
@@ -274,7 +276,7 @@ class PINN(nn.Module):
                     #print('5 : ', t.requires_grad, t.grad_fn)
                     data_loss = self.compute_data_loss(y_pred, data, t)
                     #print('6 : ', t.requires_grad, t.grad_fn)
-                    cond_loss = self.compute_cond_loss(y_pred)
+                    cond_loss = self.compute_cond_loss(y_pred, data)
                     
                     loss = lambda_eq*eq_loss + lambda_data_annealing*data_loss + lambda_cond*cond_loss
             
@@ -319,7 +321,7 @@ if __name__ == '__main__' :
         
         return loss_data
     
-    def compute_cond_loss(self, y_pred) :
+    def compute_cond_loss(self, y_pred, data) :
     
         S0 = self.args['S0']
         E0 = self.args['E0']
