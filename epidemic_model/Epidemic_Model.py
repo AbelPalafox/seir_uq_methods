@@ -1,5 +1,5 @@
 
-from numpy import roll, maximum
+from numpy import roll, maximum, cumsum, diff
 import matplotlib.pyplot as plt
 
 class Epidemic_Model :
@@ -52,6 +52,14 @@ class Epidemic_Model :
 
             inc = sigma*E - gamma*I
 
+            return inc
+        
+        elif method == 'roman' :
+
+            sigma = kwargs['sigma']
+            Y = cumsum(sigma*P)
+            inc = diff(Y)
+            #print(P[:5], inc[:5], sigma*P[0])
             return inc
         
         else :

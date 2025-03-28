@@ -226,7 +226,7 @@ class AnalysisTools :
         simulations = []
         
         def run_loop(param_vector) :
-
+                    
             for theta in param_vectors :
                 out = self.forward_map(theta)
                 simulations.append(out)
@@ -244,21 +244,40 @@ class AnalysisTools :
         if n < 1 :
             n = int(n * self.idata.posterior.draw.size)
 
+        print(f'Using {n} samples')
+
         posterior_predictive = self.generate_from_simulated_data(n)
 
         mean_predictive = np.mean(posterior_predictive, axis=0)
 
+        map_theta, map_estimate = self.get_map() 
+
         plt.figure()
         plt.plot(self.time, self.data, label='Data')
         plt.plot(self.time, posterior_predictive.T, alpha=0.1, lw=3, color='gray')
-        plt.plot(self.time, mean_predictive, color='tab:orange', lw=2, label='Mean predictive')   
+        plt.plot(self.time, mean_predictive, color='tab:orange', lw=2, label='Mean predictive')
+        plt.plot(self.time, map_estimate, '--', color='tab:green', label='MAP estimate')
         plt.grid()
         plt.legend()
         plt.show()
 
         return
         
+    def get_map(self) :
 
+        energy = self.idata.sample_stats.energy.values
+
+        map_index = np.unravel_index(np.argmax(energy), energy.shape)
+
+        print(np.argmax(energy))
+        print(map_index)
+
+        map_theta = [self.idata.posterior[var].values[map_index] for var in self.idata.posterior.keys()]
+
+        map_estimate = self.forward_map(map_theta)
+
+        return map_theta, map_estimate
+    
     def report_results(self) :
         
         self.summary()

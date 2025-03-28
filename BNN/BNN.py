@@ -13,6 +13,7 @@ from pytwalk import pytwalk
 import emcee
 from tqdm import tqdm
 from samplers.pyhmc import pyhmc
+from utils import Normalizer
 
 class BNN :
     
@@ -55,16 +56,18 @@ class BNN :
         
     def likelihood(self, theta_) :
         
-        t = torch.tensor(self.args['t'], dtype=torch.float32).view(-1, 1)
-        data = torch.tensor(self.args['data'], dtype=torch.float32).view(-1, 1)
+        #t = torch.tensor(self.args['t'], dtype=torch.float32).view(-1, 1)
+        #data = torch.tensor(self.args['data'], dtype=torch.float32).view(-1, 1)
         lambda_data = self.args['lambda_data']
         lambda_cond = self.args['lambda_cond']
         lambda_eq = self.args['lambda_eq']
         
-        
-        theta = torch.tensor(theta_[:-self.nparams])
-        params = [torch.tensor(_) for _ in theta_[-self.nparams:]]
-        
+        #theta = torch.tensor(theta_[:-self.nparams])
+        #params = [torch.tensor(_) for _ in theta_[-self.nparams:]]
+        theta = theta_[:-self.nparams]
+        params = theta_[-self.nparams:]
+
+
         #storing current weights
         original_weights = self.model.state_dict()
         
@@ -74,10 +77,11 @@ class BNN :
         # computing loss
         with torch.no_grad() :
             model_prediction = self.model.forward(t) 
-            
-        eq_loss, dsystem_dt = self.model.compute_eq_loss(model_prediction, t, params)
-        data_loss = self.model.compute_data_loss(model_prediction, data, t)
-        cond_loss = self.model.compute_cond_loss(model_prediction)
+
+        self.model.log_beta, self.model.log_sigma, self.model.log_gamma = params    
+        eq_loss, dsystem_dt = self.model.compute_eq_loss(model_prediction, self.t)
+        data_loss = self.model.compute_data_loss(model_prediction, self.data, self.t)
+        cond_loss = self.model.compute_cond_loss(model_prediction, self.data)
     
         loss = lambda_eq*eq_loss + lambda_data*data_loss + lambda_cond*cond_loss
         
@@ -88,8 +92,8 @@ class BNN :
         
     def prior(self, theta_) :
         
-        theta = torch.tensor(theta_[:-self.nparams])
-        params = torch.tensor(theta_[-self.nparams:])
+        theta = theta_[:-self.nparams]
+        params = theta_[-self.nparams:]
         
         sigma = self.args['sigma']
         
@@ -101,7 +105,7 @@ class BNN :
         ## evaluando la prior para los parámetros del modelo SEIR
         log_beta, log_sigma, log_gamma = params
         
-        # Media y desviación estándar de las priors normales
+        # Media y desviación estándar de las priors normales  #### aqui voy. voy a automatizar esto para que no sea exclusivo del SEIR
         mu_beta, sigma_beta = np.log(self.args['mu_prior_beta']), self.args['sigma_prior_beta']
         mu_sigma, sigma_sigma = np.log(self.args['mu_prior_sigma']), self.args['sigma_prior_sigma']
         mu_gamma, sigma_gamma = np.log(self.args['mu_prior_gamma']), self.args['sigma_prior_gamma']
@@ -174,20 +178,30 @@ class BNN :
 
         self.params = kwargs['params']
         self.nparams = len(self.params)
-        
+
+        N = kwargs['N']
+        min_val = torch.tensor(0, dtype=torch.float32)
+        max_val = torch.tensor(N, dtype=torch.float32)
+        self.model.normalizer = Normalizer(min_val, max_val)
+
         flat_params, shapes = self.get_params_vector()
         self.ndim = len(flat_params) + self.nparams
         self.shapes = shapes
         
+        nn_parameters = self.get_params_vector()
+        
+        self.t_data = torch.tensor(kwargs['t'], dtype=torch.float32, requires_grad=True).view(-1,1)
+        self.data = torch.tensor(kwargs['data'], dtype=torch.float32).view(-1,1)
+
+
         # 1. Inicialización
         if initial_weights is None:
             initial_weights = self.get_params_vector()[0]  # Usamos los parámetros iniciales del modelo
-        current_weights = np.array([w.item() for w in initial_weights] + [np.log(_) for _ in self.params]) # juntamos los pesos y sesgos, con los parámetros de la ED
-        
+        current_weights = list(initial_weights) + [self.model.log_beta, self.model.log_sigma, self.model.log_gamma] # juntamos los pesos y sesgos, con los parámetros de la ED
+
         self.sampler_name = sampler
         
         print(f'Running on sampler: {sampler}')
-
         
         if sampler=='twalk' :
             self.sampler = pytwalk(self.ndim, k=1, w=self.likelihood, Supp=self.support, u=self.prior)

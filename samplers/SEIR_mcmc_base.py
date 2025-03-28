@@ -59,6 +59,15 @@ class SEIR_mcmc_base(AnalysisTools) :
 
             S0 = N - E0 - I0 - R0
             x0 = [S0,E0,I0,R0]
+        elif self.params['init_cond'] == 'estimated_roman' :
+            s0, e0, I0, r0 = self.x0
+
+            E0 = self.data[0]/sigma
+            R0 = 0
+            S0 = N - E0 - I0 - R0
+            x0 = [S0,E0,I0,R0]
+
+
         else :
             print('Warning: initial condition not defined. Using default')
             x0 = self.x0
@@ -67,17 +76,21 @@ class SEIR_mcmc_base(AnalysisTools) :
         
         S, E, I, R = x[:]
 
+        #print(' --- ', x0, sigma, gamma )
+
         if self.params['inc_method'] == 'susceptible' :
             incidency = -seir_model.incidency(np.hstack([[N],S]),t,1,method='susceptible')
-        else :
+        elif self.params['inc_method'] == 'exposed' :
             incidency = seir_model.incidency([E,I],t,1,method='exposed',sigma=sigma,gamma=gamma)
+        elif self.params['inc_method'] == 'roman' :
+            incidency = seir_model.incidency(np.hstack([[0],E]),t,1,method='roman',sigma=sigma,gamma=gamma)
 
         return incidency
 
     def LikelihoodEnergyPoisson(self, theta) :
 
         incidency = self.forward_map(theta)
-        
+        #print(incidency[0]) #### 
         epsilon = 1e-8 ## numerical regularization to avoid log 0
         
         if (incidency < 0).any() :
@@ -99,21 +112,24 @@ class SEIR_mcmc_base(AnalysisTools) :
         return val
     
     def LikelihoodEnergyNegBinom(self,theta) :
-        print('Warning. This has not been tested yet!')
+        #print('Warning. This has not been tested yet!')
         data = self.data
 
         p_negbinom = self.params['p_negbinom']        
         
         incidency = self.forward_map(theta)
 
-        mu = np.round(incidency)
+        r = np.round(incidency)
         
-        p = mu / (mu + theta)
-        log_binom = sp.gammaln(data + p_negbinom) - sp.gammaln(data + 1) - sp.gammaln(p_negbinom)
+        #p = mu / (mu + theta)
+        #log_binom = sp.gammaln(data + p_negbinom) - sp.gammaln(data + 1) - sp.gammaln(p_negbinom)
         
-        logL = -np.sum(log_binom + p_negbinom*np.log(1-p) + data*np.log(p))
+        #logL = -np.sum(log_binom + p_negbinom*np.log(1-p) + data*np.log(p))
         
-        return logL
+        log_binom = sp.gammaln(data + r) - sp.gammaln(data+1) - sp.gammaln(r)
+
+        return -np.sum(log_binom + r - np.log(1-p_negbinom) + data*np.log(p_negbinom))
+
     
     def PriorBeta(self,theta) :
         
