@@ -5,6 +5,7 @@ import torch
 from numpy import exp
 from epidemic_model import Epidemic_Model
 from utils import Normalizer
+import pickle
 
 class SEIR_PINN(PINN) :
     
@@ -56,7 +57,7 @@ class SEIR_PINN(PINN) :
                                         params=[self.log_beta, self.log_sigma, self.log_gamma],
                                         S0=S0,
                                         E0=E0,
-                                        I0=I0,
+                                        #I0=I0,
                                         R0=R0,
                                         lambda_data=1e0,
                                         lambda_cond=1e-5,
@@ -101,6 +102,17 @@ class SEIR_PINN(PINN) :
 
             return incidency
 
+        elif method == 'roman' :
+
+            sigma = torch.exp(self.log_sigma)
+            Y = torch.cumsum(sigma*P,dim=0)
+
+            Zero_tensor = torch.tensor([0], dtype=torch.float32, device=P.device)  # Si es constante
+            Zero_tensor = Zero_tensor.expand_as(P[:1]) 
+
+            incidency = (Y - torch.cat([Zero_tensor, Y[:-1]])) 
+            
+            return incidency
 
         else :
 
@@ -118,20 +130,20 @@ class SEIR_PINN(PINN) :
         N = torch.tensor(self.args['N'], dtype=torch.float32)
 
         #S_pred, E_pred, I_pred = torch.split(y_pred, 1, dim=1)
+
         S_pred = y_pred[:, 0]
         E_pred = y_pred[:, 1]
         I_pred = y_pred[:, 2]
+        R_pred = 1 - S_pred - E_pred - I_pred
 
-        S_pred_denormalized = self.normalizer.denormalize(S_pred)
-        E_pred_denormalized = self.normalizer.denormalize(E_pred)
-        I_pred_denormalized = self.normalizer.denormalize(I_pred)
-
-        R_pred = N - S_pred - E_pred - I_pred
-                
         dS_dt = torch.autograd.grad(S_pred, t, torch.ones_like(S_pred), create_graph=True)[0]
         dE_dt = torch.autograd.grad(E_pred, t, torch.ones_like(E_pred), create_graph=True)[0]
         dI_dt = torch.autograd.grad(I_pred, t, torch.ones_like(I_pred), create_graph=True)[0]
         dR_dt = torch.autograd.grad(R_pred, t, torch.ones_like(R_pred), create_graph=True)[0]
+
+        S_pred_denormalized = self.normalizer.denormalize(S_pred)
+        E_pred_denormalized = self.normalizer.denormalize(E_pred)
+        I_pred_denormalized = self.normalizer.denormalize(I_pred)
 
         dS_dt_denormalizated = self.normalizer.denormalize(dS_dt)
         dE_dt_denormalizated = self.normalizer.denormalize(dE_dt)
@@ -182,8 +194,10 @@ class SEIR_PINN(PINN) :
         #data_denormalized = self.normalizer.denormalize(data)#.requires_grad_()
         if self.args['inc_method'] == 'exposed' : 
             incidency = self.compute_incidency([E_pred_denormalized, I_pred_denormalized], N, method='exposed')
-        else :
+        elif self.args['inc_method'] == 'susceptible' : 
             incidency = self.compute_incidency(S_pred_denormalized, N)
+        elif self.args['inc_method'] == 'roman' : 
+            incidency = self.compute_incidency(E_pred_denormalized, N, method='roman')
 
         if not self.support(incidency) :
             return torch.tensor(1e6)
@@ -260,6 +274,13 @@ class SEIR_PINN(PINN) :
                 E0 = hat_E0
                 I0 = hat_I0
                 R0 = hat_R0
+        
+        elif self.args['init_cond'] == 'estimated_roman':
+            sigma = torch.exp(self.log_sigma)
+            E0 = data[0]/sigma
+            R0 = 0
+            S0 = N - E0 - I0 - R0
+            
         else :
             print('Initial conditions method has not been implemented')
             print('init_cond should be fixed or estimated in the configuration file')
@@ -310,5 +331,19 @@ class SEIR_PINN(PINN) :
 
         #print(self.log_beta, self.log_sigma, self.log_gamma)
 
+
+    def save_model(self, fname) :
+        from numpy import concatenate, exp
+
+        data = {}
+        data['pinn_params'] = concatenate([p.detach().numpy().flatten() for p in self.parameters()])
+        data['pinn_params'][0] = exp(data['pinn_params'][0])
+        data['pinn_params'][1] = exp(data['pinn_params'][1])
+        data['pinn_params'][2] = exp(data['pinn_params'][2])
+
+        with open(fname,'wb') as fout:
+            pickle.dump(data,fout)
+
+        return 
 
 

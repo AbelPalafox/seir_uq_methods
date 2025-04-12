@@ -73,6 +73,7 @@ class PINN(nn.Module):
         self.data_losses = []
         self.cond_losses = []
         self.eq_losses = []
+        self.losses = []
         self.params_track = []
 
         if optim == 'Adam' :
@@ -117,6 +118,7 @@ class PINN(nn.Module):
                 self.data_losses.append(data_loss.item())
                 self.cond_losses.append(cond_loss.item())
                 self.eq_losses.append(eq_loss.item())
+                self.losses.append(loss.item())
                 self.params_track.append([_.item() for _ in params])
             
                 # if i % status == 0:

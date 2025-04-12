@@ -27,6 +27,7 @@ class SEIR_mcmc_base(AnalysisTools) :
             self.ndim = kwargs['ndim']
             self.likelihood_model = kwargs['likelihood_model']
             self.prior_model = kwargs['prior_model']
+            self.outpath = kwargs['outpath']
             
         except :
             print('Warning. Something is strange here!')
@@ -36,15 +37,11 @@ class SEIR_mcmc_base(AnalysisTools) :
             kwargs['labels'] = labels
         self.labels = kwargs['labels']
         self.params = kwargs
-        
-    def forward_map(self, theta) : 
 
-        N = self.N
-        t = self.time
-                
-        beta, sigma, gamma = theta
+    def get_initial_conditions(self, theta) :
         
-        seir_model = SEIR_Model(beta,sigma,gamma,N)
+        beta, sigma, gamma = theta
+        N = self.params['N']
         
         x0 = []
 
@@ -71,6 +68,20 @@ class SEIR_mcmc_base(AnalysisTools) :
         else :
             print('Warning: initial condition not defined. Using default')
             x0 = self.x0
+
+        return x0
+
+
+    def forward_map(self, theta) : 
+
+        N = self.N
+        t = self.time
+                
+        beta, sigma, gamma = theta
+        
+        seir_model = SEIR_Model(beta,sigma,gamma,N)
+        
+        x0 = self.get_initial_conditions(theta)
 
         x = seir_model.run(x0,t)
         
@@ -119,15 +130,10 @@ class SEIR_mcmc_base(AnalysisTools) :
         
         incidency = self.forward_map(theta)
 
-        r = np.round(incidency)
-        
-        #p = mu / (mu + theta)
-        #log_binom = sp.gammaln(data + p_negbinom) - sp.gammaln(data + 1) - sp.gammaln(p_negbinom)
-        
-        #logL = -np.sum(log_binom + p_negbinom*np.log(1-p) + data*np.log(p))
+        r = np.round(incidency) + 1e-8
         
         log_binom = sp.gammaln(data + r) - sp.gammaln(data+1) - sp.gammaln(r)
-
+        
         return -np.sum(log_binom + r - np.log(1-p_negbinom) + data*np.log(p_negbinom))
 
     
@@ -252,5 +258,49 @@ class SEIR_mcmc_base(AnalysisTools) :
                 scale_prior = self.params[f'scale_{label}_prior']
                 
                 prior_curves[label] = scipy.stats.gamma.rvs(shape_prior, scale=scale_prior, size=n)
+
+        return prior_curves
+    
+
+    def get_prior_curves(self) :
+
+        print(f'Generating prior curves. Prior model: {self.prior_model}')
+
+        prior_curves = {}
+        if self.prior_model == 'Beta' :
+
+            for label in self.labels :
+                _min = self.params[f'{label}_min']
+                _max = self.params[f'{label}_max']
+
+                x = np.linspace(_min, _max, 500)
+
+                alpha_prior = self.params[f'alpha_{label}_prior']
+                beta_prior = self.params[f'beta_{label}_prior']
+                                
+                prior_curves[label] = [x,scipy.stats.beta.pdf(x,alpha_prior, beta_prior)]
+
+        elif self.prior_model == 'Uniform': 
+            
+            for label in self.labels :
+                _min = self.params[f'{label}_min']
+                _max = self.params[f'{label}_max']
+                
+                x = np.linspace(_min, _max, 500)
+
+                prior_curves[label] = [x,scipy.stats.uniform.pdf(x,loc=_min, scale=_max-_min)]
+                
+        elif self.prior_model == 'Gamma' :
+
+            for label in self.labels :
+                _min = self.params[f'{label}_min']
+                _max = self.params[f'{label}_max']
+
+                x = np.linspace(_min, _max, 500)
+
+                shape_prior = self.params[f'shape_{label}_prior']
+                scale_prior = self.params[f'scale_{label}_prior']
+                
+                prior_curves[label] = [x,scipy.stats.gamma.pdf(x,shape_prior, scale=scale_prior)]
 
         return prior_curves

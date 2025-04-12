@@ -14,135 +14,152 @@ import emcee
 from tqdm import tqdm
 from samplers.pyhmc import pyhmc
 from utils import Normalizer
+import copy
+import pickle
 
 class BNN :
     
-    def __init__(self, pinn_model, n_input, n_output, n_hidden, n_flayers, **kwargs) :
+    def __init__(self, pinn_model, system_model, n_input, n_output, **kwargs) :
         
-        self.model = pinn_model(n_input, n_output, n_hidden, n_flayers)
+        n_hidden = kwargs['n_hidden']
+        n_flayers = kwargs['n_flayers']
+        self.model = pinn_model()#pinn_model(n_input, n_output, n_hidden, n_flayers)
+        self.system_model = system_model(**kwargs)
         self.args = kwargs
         self.call_counter = 0
 
+        self.data_losses = []
+        self.cond_losses = []
+        self.eq_losses = []
+        self.losses = []
+
+
         return 
     
-    def set_weights(self, weights) :
+    # def set_weights(self, weights) :
         
-        with torch.no_grad() :
-            for param, new_value in zip(self.model.parameters(), weights):
-                param.copy_(torch.tensor(new_value, dtype=param.dtype))     
-        return
+    #     with torch.no_grad() :
+    #         for param, new_value in zip(self.model.parameters(), weights):
+    #             param.copy_(torch.tensor(new_value, dtype=param.dtype))     
+    #     return
 
     def get_params_vector(self) :
         
-        params = []
-        shapes = []
-        for param in self.model.parameters() :
-            shapes.append(param.shape)
-            params.append(param.view(-1))
+        # params = []
+        # shapes = []
+        # for param in self.model.parameters() :
+        #     shapes.append(param.shape)
+        #     params.append(param.view(-1))
+        
+        return np.concatenate([p.detach().numpy().flatten() for p in self.model.parameters()])
+
             
-        return torch.cat(params), shapes
+        #return torch.cat(params), shapes
     
-    def set_params_vector(self, flat_params, shapes) :
+    # def set_params_vector(self, flat_params, shapes) :
         
-        with torch.no_grad() :
-            index = 0
-            for param, shape in zip(self.model.parameters(), shapes) :
-                size = torch.prod(torch.tensor(shape)).item()
-                new_value = flat_params[index: index + size].view(shape)
-                param.copy_(new_value)
-                index += size
+    #     with torch.no_grad() :
+    #         index = 0
+    #         for param, shape in zip(self.model.parameters(), shapes) :
+    #             size = torch.prod(torch.tensor(shape)).item()
+    #             new_value = flat_params[index: index + size].view(shape)
+    #             param.copy_(new_value)
+    #             index += size
         
-        return 
+    #     return 
+
+    def set_params_vector(self, params_vector) :
+
+        start = 0
+        with torch.no_grad():  # Desactivar gradientes al actualizar pesos manualmente
+            for p in self.model.parameters():
+                size = p.numel()  # Número de elementos en el tensor
+                new_values = params_vector[start:start + size].reshape(p.shape)  # Ajustar forma
+                p.copy_(torch.tensor(new_values, dtype=torch.float32))  # Copiar valores
+                start += size
+
         
     def likelihood(self, theta_) :
         
-        #t = torch.tensor(self.args['t'], dtype=torch.float32).view(-1, 1)
-        #data = torch.tensor(self.args['data'], dtype=torch.float32).view(-1, 1)
-        lambda_data = self.args['lambda_data']
-        lambda_cond = self.args['lambda_cond']
-        lambda_eq = self.args['lambda_eq']
-        
-        #theta = torch.tensor(theta_[:-self.nparams])
-        #params = [torch.tensor(_) for _ in theta_[-self.nparams:]]
+        lambda_data = self.model.args['lambda_data']
+        lambda_cond = self.model.args['lambda_cond']
+        lambda_eq = self.model.args['lambda_eq']
+
         theta = theta_[:-self.nparams]
         params = theta_[-self.nparams:]
 
-
-        #storing current weights
-        original_weights = self.model.state_dict()
-        
-        # using proposal weights
-        self.set_params_vector(theta, self.shapes)
-        
         # computing loss
         with torch.no_grad() :
-            model_prediction = self.model.forward(t) 
+            # using proposal weights
+            self.set_params_vector(theta)
+        
+        model_prediction = self.model.forward(self.t) 
 
-        self.model.log_beta, self.model.log_sigma, self.model.log_gamma = params    
+        self.model.log_beta = torch.log(torch.tensor(params[0], dtype=torch.float32))#, requires_grad=True))
+        self.model.log_sigma = torch.log(torch.tensor(params[1], dtype=torch.float32))#, requires_grad=True))
+        self.model.log_gamma = torch.log(torch.tensor(params[2], dtype=torch.float32))#, requires_grad=True))
         eq_loss, dsystem_dt = self.model.compute_eq_loss(model_prediction, self.t)
         data_loss = self.model.compute_data_loss(model_prediction, self.data, self.t)
         cond_loss = self.model.compute_cond_loss(model_prediction, self.data)
     
-        loss = lambda_eq*eq_loss + lambda_data*data_loss + lambda_cond*cond_loss
+        loss = 1e8*(lambda_eq*eq_loss + lambda_data*data_loss + lambda_cond*cond_loss)
         
-        # restoring the current weights
-        self.model.load_state_dict(original_weights)
-        
+        self.data_losses.append(data_loss.item())
+        self.cond_losses.append(cond_loss.item())
+        self.eq_losses.append(eq_loss.item())
+        self.losses.append(loss.item())
+
         return loss.item()
-        
+
+
     def prior(self, theta_) :
         
         theta = theta_[:-self.nparams]
         params = theta_[-self.nparams:]
         
-        sigma = self.args['sigma']
+        sigma = self.model.args['sigma_weight_prior']
         
         # Gaussian prior
         log_p = 0.0
         for param in theta :
-            log_p += 0.5*torch.sum(param**2) / (sigma**2)
+            log_p += 0.5*np.sum(param**2) / (sigma**2)
         
-        ## evaluando la prior para los parámetros del modelo SEIR
-        log_beta, log_sigma, log_gamma = params
-        
-        # Media y desviación estándar de las priors normales  #### aqui voy. voy a automatizar esto para que no sea exclusivo del SEIR
-        mu_beta, sigma_beta = np.log(self.args['mu_prior_beta']), self.args['sigma_prior_beta']
-        mu_sigma, sigma_sigma = np.log(self.args['mu_prior_sigma']), self.args['sigma_prior_sigma']
-        mu_gamma, sigma_gamma = np.log(self.args['mu_prior_gamma']), self.args['sigma_prior_gamma']
-        
-        
-    
-        # Evaluación del logaritmo de la prior
-        log_p += 0.5 * torch.sum((log_beta - mu_beta) ** 2) / (sigma_beta ** 2)
-        log_p += 0.5 * torch.sum((log_sigma - mu_sigma) ** 2) / (sigma_sigma ** 2)
-        log_p += 0.5 * torch.sum((log_gamma - mu_gamma) ** 2) / (sigma_gamma ** 2)
-    
-        # Agregar el término de normalización
-        log_p += 0.5 * (torch.log(torch.tensor(2 * np.pi * sigma_beta**2)) +
-                          torch.log(torch.tensor(2 * np.pi * sigma_sigma**2)) +
-                          torch.log(torch.tensor(2 * np.pi * sigma_gamma**2)))
-        return log_p
+        #print(self.system_model.params)
+
+        if self.prior_model == 'Beta' :
+            lnprior = self.system_model.PriorBeta(params)
+        elif self.prior_model == 'Logarithmic' :
+            lnprior = self.system_model.PriorLogarithmic(params)
+        elif self.prior_model == 'Gamma' :
+            lnprior = self.system_model.PriorGamma(params)
+        else :
+            lnprior = self.system_model.PriorUniform(params)
+
+        return (log_p + lnprior)/len(theta_)
         
     def support(self, theta_) :
         
-        params = torch.tensor(theta_[-self.nparams:])
-        
-        bounds = self.args['bounds']
-        
-        for p, bound in zip(params, bounds) :
-            if torch.exp(p) < bound[0] :
-                return False
-            if torch.exp(p) > bound[1] :
+        params = theta_[-self.nparams:]
+        theta = theta_[:-self.nparams]
+
+        for param, label in zip(params, self.model.labels) :
+            param = float(param)
+            if param < self.model.args[f'{label}_min'] or param > self.model.args[f'{label}_max'] :
                 return False
         
+        if (theta > 1e3).any() or (theta < -1e3).any() :
+            return False
+
         return True
     
     def lnprob(self, theta_) :
         
         if not self.support(theta_) :
-            print('out of  support')
-            return -torch.inf
+            #print('out of  support')
+            return -1e9
         
+        #model = copy.deepcopy(self.model)
+
         loss_likelihood = self.likelihood(theta_)
         loss_prior = self.prior(theta_)
         
@@ -151,13 +168,13 @@ class BNN :
             print(f'loss: {loss:.6g}, {loss_likelihood:.6g}, {loss_prior:.6g} ')
         self.call_counter += 1
         
-        if np.isnan(loss) :
-            print(f'loss: {loss:.6g}, {loss_likelihood:.6g}, {loss_prior:.6g} ')
+        #if np.isnan(loss) or np.isinf(loss) :
+        #    print(f'loss: {loss:.6g}, {loss_likelihood:.6g}, {loss_prior:.6g} ')
         
         return loss
     
     
-    def infer_parameters(self, num_iterations, initial_weights=None, step_size=0.01, sampler=None, **kwargs):
+    def infer_parameters(self, num_iterations, initial_weights=None, sampler=None, **kwargs):
         """
         Inferir los parámetros de la red neuronal bayesiana utilizando MCMC.
         
@@ -172,11 +189,11 @@ class BNN :
         Returns:
             Lista con los parámetros inferidos en cada iteración.
         """
-        self.args.update(kwargs)
+        #self.args.update(kwargs)
 
         self.model.args.update(kwargs)
 
-        self.params = kwargs['params']
+        self.params = np.array(kwargs['params'])
         self.nparams = len(self.params)
 
         N = kwargs['N']
@@ -184,52 +201,69 @@ class BNN :
         max_val = torch.tensor(N, dtype=torch.float32)
         self.model.normalizer = Normalizer(min_val, max_val)
 
-        flat_params, shapes = self.get_params_vector()
-        self.ndim = len(flat_params) + self.nparams
-        self.shapes = shapes
-        
-        nn_parameters = self.get_params_vector()
-        
-        self.t_data = torch.tensor(kwargs['t'], dtype=torch.float32, requires_grad=True).view(-1,1)
+        pinn_params_np = self.get_params_vector()
+        self.ndim = pinn_params_np.size + self.nparams
+                
+        self.t = torch.tensor(kwargs['t'], dtype=torch.float32, requires_grad=True).view(-1,1) ## require_grad
         self.data = torch.tensor(kwargs['data'], dtype=torch.float32).view(-1,1)
 
+        self.prior_model = kwargs['prior_model']
 
-        # 1. Inicialización
-        if initial_weights is None:
-            initial_weights = self.get_params_vector()[0]  # Usamos los parámetros iniciales del modelo
-        current_weights = list(initial_weights) + [self.model.log_beta, self.model.log_sigma, self.model.log_gamma] # juntamos los pesos y sesgos, con los parámetros de la ED
+        # 1. Inicialization
+        #if initial_weights is None:
+        #    initial_weights = self.get_params_vector()[0]  # Usamos los parámetros iniciales del modelo
+        
+        if 'f_init_name' in kwargs :
+            print(f'Loading pinn weights and initial parameters from file {kwargs["f_init_name"]}')
 
+            with open(kwargs["f_init_name"], 'rb') as fin :
+                data_init = pickle.load(fin)
+                pinn_params = data_init['pinn_params']
+                
+            pinn_params_np = pinn_params[self.nparams:]
+            self.params = pinn_params[:self.nparams]
+
+        current_weights = np.concatenate([pinn_params_np, self.params]) # juntamos los pesos y sesgos, con los parámetros de la ED
+        print('starting from params: ', self.params)
         self.sampler_name = sampler
         
         print(f'Running on sampler: {sampler}')
         
         if sampler=='twalk' :
-            self.sampler = pytwalk(self.ndim, k=1, w=self.likelihood, Supp=self.support, u=self.prior)
+            self.sampler = pytwalk(self.ndim, k=1, U=None, w=self.likelihood, Supp=self.support, u=self.prior)
             
+            self.sampler.U = self.sampler.Energy   ### modification to allow serialization when saving to joblib
             xp0 = current_weights
-            xp1 = current_weights + np.random.normal(0,1,len(current_weights))
-            self.sampler.Run(num_iterations, xp0, xp1)
-            
-            self.Output = self.sampler.Output
+            xp1 = current_weights + 0.0001*np.random.randn(len(current_weights))
+            self.sampler.Run(num_iterations, xp0, xp1, save_xp=True)
+             
+            self.Output = np.stack((self.sampler.Output[:,:-1], self.sampler.Outputp[:,:-1]), axis=1)
 
         elif sampler=='emcee' :
             
             self.nwalkers = int(2*self.ndim)
             print(f'using {self.nwalkers} walkers')
-            self.sampler = emcee.EnsembleSampler(self.nwalkers, self.ndim, self.lnprob)
-
-            theta_0 =[current_weights + 0.5*np.random.randn(len(current_weights)) for _ in range(self.nwalkers)]
+            theta_0 =[current_weights + 0.001*np.random.randn(len(current_weights)) for _ in range(self.nwalkers)]
             
+            from emcee.moves import DEMove, WalkMove, DESnookerMove, KDEMove
+            moves = [(DEMove(sigma=1e-8), 0.5), (WalkMove(self.ndim), 0.3), (DESnookerMove(gammas=1.7/2), 0.2)]
+            
+            self.sampler = emcee.EnsembleSampler(self.nwalkers, self.ndim, self.lnprob, moves=moves)
             with tqdm(total=num_iterations) as pbar:
                 for i, _ in enumerate(self.sampler.sample(theta_0, iterations=num_iterations)):
                     pbar.update(1)
-
+            
             self.Output = self.sampler.get_chain()
 
         elif sampler=='pyhmc' :
-            self.sampler = pyhmc(self.likelihood,self.prior,self.support,**kwargs)
             
-            self.Run(num_iterations, current_weights)
+            self.sampler = pyhmc(self.likelihood,self.prior,self.support,ndim=self.ndim, **kwargs)
+            
+            with tqdm(total=num_iterations) as pbar :
+                for i, _ in enumerate(self.sampler.Run(num_iterations, current_weights)) :
+                    pbar.update(1)
+            
+            self.sampler.Output = np.expand_dims(self.sampler.Output,axis=1)
             self.Output = self.sampler.Output
                        
         else :

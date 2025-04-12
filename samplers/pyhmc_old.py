@@ -15,7 +15,7 @@ from numpy import linalg
 #from functools import partial
 import scipy.linalg
 from time import time
-from joblib import Parallel, delayed
+
 
 class pyhmc :
     
@@ -35,7 +35,7 @@ class pyhmc :
     def U(self, theta) :
         
         if not self.support(theta):
-            return 1e8 
+            return np.inf 
         
         return self.loglikelihood(theta) + self.logprior(theta)
     
@@ -49,86 +49,79 @@ class pyhmc :
         
         diff_matrix = np.eye(dim)*h
 
-        #
-        #U_fw = np.apply_along_axis(self.U, 1, theta+diff_matrix)
-        #U_bw = np.apply_along_axis(self.U, 1, theta-diff_matrix)
-        def eval_U_shift(i) :
-            return self.U(theta + diff_matrix[i]), self.U(theta - diff_matrix[i])
+        U_fw = np.apply_along_axis(self.U, 1, theta+diff_matrix)
+        U_bw = np.apply_along_axis(self.U, 1, theta-diff_matrix)
         
-        results = Parallel(n_jobs=dim)(delayed(eval_U_shift)(i) for i in range(dim))
-
-        U_fw, U_bw = zip(*results)
-
-        grad = (np.array(U_fw) - np.array(U_bw)) / (2.0*h)
+        grad = (U_fw - U_bw) / (2.0*h)
         
         return grad
     
-    def hessian(self, x0) :
+    def hessian(self, theta) :
 
-        tam = np.shape(x0)[0]
-        Hess = np.zeros([tam,tam])
+        theta = np.asarray(theta, dtype=float)
+
+        dim = self.ndim
         h = self.h
-        Hj = np.zeros([tam])
-        Hi = np.zeros([tam])
         
-        f_x0 = self.U(x0)
-        #print('*** ', x0, f_x0)
-        for i in range(tam):    
-            Hi[i] = h
-            for j in range(i):
-                Hj[j] = h
-                Hess[i,j] = (self.U(x0+Hi+Hj)+self.U(x0-Hi-Hj)-self.U(x0-Hi+Hj)-self.U(x0+Hi-Hj))/(4*h**2)
-                Hess[j,i] = Hess[i,j]
-                Hj[j] = 0.0           
-            Hess[i,i] = (self.U(x0+Hi)-2*f_x0+self.U(x0-Hi))/(h**2)
-            Hi[i] = 0.0
+        H = np.zeros((dim, dim))
+            
+        diff_matrix = np.eye(dim)*h
+        
+        # Evaluaciones para segundas derivadas cruzadas (H[i, j], i ≠ j)
+        #f_pp = np.array([self.U(theta + diff_matrix[i] + diff_matrix[j]) for i in range(dim) for j in range(i, dim)]).reshape(dim, -1)
+        #f_pm = np.array([self.U(theta + diff_matrix[i] - diff_matrix[j]) for i in range(dim) for j in range(i, dim)]).reshape(dim, -1)
+        #f_mp = np.array([self.U(theta - diff_matrix[i] + diff_matrix[j]) for i in range(dim) for j in range(i, dim)]).reshape(dim, -1)
+        #f_mm = np.array([self.U(theta - diff_matrix[i] - diff_matrix[j]) for i in range(dim) for j in range(i, dim)]).reshape(dim, -1)
+        f_pp = np.array([self.U(theta + diff_matrix[i] + diff_matrix[j]) for i in range(dim) for j in range(i, dim)])
+        f_pm = np.array([self.U(theta + diff_matrix[i] - diff_matrix[j]) for i in range(dim) for j in range(i, dim)])
+        f_mp = np.array([self.U(theta - diff_matrix[i] + diff_matrix[j]) for i in range(dim) for j in range(i, dim)])
+        f_mm = np.array([self.U(theta - diff_matrix[i] - diff_matrix[j]) for i in range(dim) for j in range(i, dim)])
     
-        return Hess
+    
+        # Cálculo de segundas derivadas cruzadas
+        H[np.triu_indices(dim)] = (f_pp - f_pm - f_mp + f_mm) / (4 * h**2)
+        H += np.triu(H, 1).T  # Rellenar la parte inferior por simetría
+    
+        # Evaluaciones para segundas derivadas puras (H[i, i])
+        f_p = np.array([self.U(theta + diff_matrix[i]) for i in range(dim)])
+        f_m = np.array([self.U(theta - diff_matrix[i]) for i in range(dim)])
+        f_0 = self.U(theta)
+    
+        # Cálculo de derivadas puras
+        H[np.diag_indices(dim)] = (f_p - 2 * f_0 + f_m) / (h**2)
+    
+        return H
     
 
-    def leapfrog(self, q_,p_,WeightInv, U_q_) :
+    def leapfrog(self, q_,p_,Weight) :
         
         #print('entering leapfrog')
         step_size = self.step_size
-        dim = len(q_)
         
         q = np.asarray(q_,dtype=float).copy()
         p = np.asarray(p_,dtype=float).copy()
         
         p -= step_size * self.gradient(q) / 2.0         # half step
         
-        #L = scipy.linalg.cho_factor(Weight, lower=True) 
+        L = scipy.linalg.cho_factor(Weight, lower=True) 
         
         for _ in range(self.nsteps) :
-            q += step_size * WeightInv @ p # whole step
-
-            # check for points out of support
-            while not self.support(q) :
-                q = q_ + 0.01*np.random.randn(dim)
-
+            q += step_size * scipy.linalg.cho_solve(L, p) # whole step
             p -= step_size * self.gradient(q)           # whole step
         
-        q += step_size * WeightInv @ p     # whole step
-        while not self.support(q) :
-            q = q_ + 0.01*np.random.randn(dim)
-
+        q += step_size * scipy.linalg.cho_solve(L, p)     # whole step
         p -= step_size * self.gradient(q) / 2.0         # half step
     
-        U_q = self.U(q)
-        Start_log_p = U_q_ + 0.5* p_ @ WeightInv @ p_
-        New_log_p = U_q + 0.5* p @ WeightInv @ p
+        Start_log_p = self.U(q_) + 0.5*p_.dot(scipy.linalg.cho_solve(L, p_))
+        New_log_p = self.U(q) + 0.5*p.dot(scipy.linalg.cho_solve(L, p))
         
         if np.log(np.random.rand()) < Start_log_p - New_log_p:
-            return q, U_q, 1
+            return q, 1
         else:
-            return q, U_q, 0
+            return q, 0
         
     def Run(self, n_samples, theta_0) :
         
-        import sys
-
-        sys.stdout.flush()
-
         dim = self.ndim
         
         samples = []
@@ -140,22 +133,21 @@ class pyhmc :
         Opt = samples[0]
         Value = U_samples[0]
         
-        Weight, WeightInv = self.get_weight_matrix_inv(theta_0)
+        Weight = self.get_weight_matrix(theta_0)
         
         p0 = np.random.multivariate_normal(np.zeros(dim), Weight, 1)
         p0 = p0.reshape(dim,)
         
-        #print('* ', theta_0)
-        q_new, U_q_new, salida = self.leapfrog(
+        print('* ', theta_0)
+        q_new, salida = self.leapfrog(
             theta_0,
             p0,
-            WeightInv,
-            Value
+            Weight,
             )
-        #print('** ', theta_0)
+        print('** ', theta_0)
         
         samples.append(q_new)
-        U_new = U_q_new
+        U_new = self.U(q_new)
         
         if U_new < Value :
             Opt = q_new
@@ -164,27 +156,26 @@ class pyhmc :
         
         for i in range(n_samples) :
             
-            print(f'iteration: {i}')
+            #print(f'iteration: {i}')
             
             theta = samples[-1]
             
-            #ini_time = time()
-            Weight, WeightInv = self.get_weight_matrix_inv(theta)
-            #end_time = time()
+            ini_time = time()
+            Weight = self.get_weight_matrix(theta)
+            end_time = time()
             #print(f'elapsed time weight matrix: {end_time - ini_time}')
             p0 = np.random.multivariate_normal(np.zeros(dim), Weight, 1)
             p0 = p0.reshape(dim,)
             
             ini_time = time()
-            q_new, U_q_new, salida = self.leapfrog(
+            q_new, salida = self.leapfrog(
                 theta,
                 p0,
-                WeightInv,
-                U_samples[-1]
+                Weight,
                 )
             end_time = time()
             #print(f'elapsed time leapfrog: {end_time - ini_time}')
-            U_new = U_q_new
+            U_new = self.U(q_new)
             
             if U_new < Value :
                 Opt = q_new
@@ -197,31 +188,29 @@ class pyhmc :
                 samples.append(theta)
                 U_samples.append(U_samples[-1])
             
-            if i%100 == 0 :
-                print(q_new, U_samples[-1])
-            yield 
+            print(q_new)
+            yield q_new
             
         self.Output = np.asarray(samples)
         self.U_samples = np.asarray(U_samples)
         
-        return #np.asarray(samples), np.asarray(U_samples), Opt, Value
+        return np.asarray(samples), np.asarray(U_samples), Opt, Value
         
-    def get_weight_matrix_inv(self, theta) :
+    def get_weight_matrix(self, theta) :
         
         H = self.hessian(theta)
         
-        #print(H)
-
         AutoVal, AutoVect = linalg.eig(H)
         
-        AutoVal = np.abs(AutoVal)
-
-        if np.any(AutoVal <1e-6) :
-            return np.eye(self.ndim), np.eye(self.ndim)
+        if np.any(AutoVal == 0) :
+            return np.eye(self.ndim)
         
-        return AutoVect @ np.diag(AutoVal) @ AutoVect.T, AutoVect @ np.diag(1.0/AutoVal) @ AutoVect.T
+        if np.any(AutoVal < 0) :
+            AutoVal = np.abs(AutoVal)
+            return AutoVect @ np.diag(AutoVal) @ AutoVect.T
         
-
+        return H
+        
 if __name__ == '__main__' :
 
     def neg_log(x):

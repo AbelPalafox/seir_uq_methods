@@ -5,7 +5,7 @@ Created on Wed Feb  5 14:33:27 2025
 
 @author: abel
 """
-from pytwalk import pytwalk
+from samplers.pytwalk import pytwalk
 from .SEIR_mcmc_base import SEIR_mcmc_base
 
 # defining the class for the SEIR_twalk model
@@ -25,13 +25,15 @@ class SEIR_pytwalk(pytwalk,SEIR_mcmc_base) :
             self.PriorEnergy = self.PriorUniform
         
         if self.likelihood_model == 'Poisson' :    
-            super().__init__(self.ndim,k=1,u=self.LikelihoodEnergyPoisson,Supp=self.Supp,w=self.PriorEnergy)
+            super().__init__(self.ndim,k=1,U=None,u=self.LikelihoodEnergyPoisson,Supp=self.Supp,w=self.PriorEnergy)
         elif self.likelihood_model == 'NegBinomial' :
-            super().__init__(self.ndim,k=1,u=self.LikelihoodEnergyNegBinom,Supp=self.Supp,w=self.PriorEnergy)
+            super().__init__(self.ndim,k=1,U=None,u=self.LikelihoodEnergyNegBinom,Supp=self.Supp,w=self.PriorEnergy)
         else :
-            super().__init__(self.ndim,k=1,u=self.LikelihoodEnergyGaussian,Supp=self.Supp,w=self.PriorEnergy)
+            super().__init__(self.ndim,k=1,U=None,u=self.LikelihoodEnergyGaussian,Supp=self.Supp,w=self.PriorEnergy)
 
         self.instance = 'pytwalk'
+
+        self.U = self.Energy  ### modification to allow serialization when saving to joblib
         
     def run(self, T, xp0, xp1) :
         

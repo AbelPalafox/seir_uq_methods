@@ -76,7 +76,7 @@ class Epidemic_Model :
         """
         labels = kwargs['labels']
         
-        plt.figure()
+        plt.figure(figsize=(4.5,3))
         for x_i, label_i in zip(x,labels) :
             plt.plot(t,x_i,label=label_i)
         plt.grid()

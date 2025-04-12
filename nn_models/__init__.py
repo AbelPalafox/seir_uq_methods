@@ -3,4 +3,4 @@
 
 from .SEIR_PINN import SEIR_PINN
 
-__all__ = ['SEIR_PINN']
+__all__ = ['SEIR_PINN', 'SEIR_pyro']

@@ -24,9 +24,10 @@ class SEIR_emcee(SEIR_mcmc_base) :
                                              self.ndim, 
                                              self.lnprob,
                                              moves=[
-                                                    emcee.moves.DEMove(),
+                                                    emcee.moves.WalkMove(),
                                                     emcee.moves.StretchMove()
                                                 ])
+                                            
         
         self.instance = 'emcee'
         print('Incidency will be computed using method: ', self.params['inc_method'])
@@ -59,6 +60,7 @@ class SEIR_emcee(SEIR_mcmc_base) :
     def run(self, T, theta_0) :
         
         self.nsamples = T 
+        
         with tqdm(total=T) as pbar:
             for i, _ in enumerate(self.sampler.sample(theta_0, iterations=T)):
                 pbar.update(1)
