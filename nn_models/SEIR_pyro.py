@@ -50,16 +50,16 @@ class SEIR_pyro :
     def seir_model(self, data, **kwargs) :
         t = kwargs['t']
         # sample prior
-        self.beta = pyro.sample("beta", dist.LogNormal(torch.tensor(0.0), torch.tensor(1.0)))
-        self.gamma = pyro.sample("gamma", dist.LogNormal(torch.tensor(0.0), torch.tensor(1.0)))
-        self.sigma = pyro.sample("sigma", dist.LogNormal(torch.tensor(0.0), torch.tensor(1.0)))
+        self.beta = pyro.sample("beta", dist.Normal(torch.tensor(0.0), torch.tensor(1.0)))
+        self.gamma = pyro.sample("gamma", dist.Normal(torch.tensor(0.0), torch.tensor(1.0)))
+        self.sigma = pyro.sample("sigma", dist.Normal(torch.tensor(0.0), torch.tensor(1.0)))
 
         #print(self.beta, self.sigma, self.gamma)
 
         seir_prediction = SEIR_Model(self.beta, self.sigma, self.gamma, self.N)
         x0 = self.compute_initial_conditions(seir_prediction, data, sigma=self.sigma)
         
-        method = 'bdf' if (self.beta/self.sigma > 100 or self.beta/self.gamma > 100 ) else 'dopri5'
+        method = 'scipy_solver' if (self.beta/self.sigma > 100 or self.beta/self.gamma > 100 ) else 'dopri5'
 
         y = torch_odeint(seir_prediction, x0, t,
                          rtol=1e-2,
@@ -133,13 +133,13 @@ class SEIR_pyro :
     def guide(self, data, **kwargs) :
 
         beta_loc = pyro.param("beta_loc", torch.tensor(0.5))
-        beta_scale = pyro.param("beta_scale", torch.tensor(0.01), constraint=dist.constraints.positive)
+        beta_scale = pyro.param("beta_scale", torch.tensor(0.1), constraint=dist.constraints.positive)
         
         sigma_loc = pyro.param("sigma_loc", torch.tensor(0.5))
-        sigma_scale = pyro.param("sigma_scale", torch.tensor(0.01), constraint=dist.constraints.positive)
+        sigma_scale = pyro.param("sigma_scale", torch.tensor(0.1), constraint=dist.constraints.positive)
         
         gamma_loc = pyro.param("gamma_loc", torch.tensor(0.5))
-        gamma_scale = pyro.param("gamma_scale", torch.tensor(0.01), constraint=dist.constraints.positive)
+        gamma_scale = pyro.param("gamma_scale", torch.tensor(0.1), constraint=dist.constraints.positive)
         
 
         pyro.sample("beta", dist.Normal(beta_loc, beta_scale))
@@ -214,9 +214,9 @@ class SEIR_pyro :
         elif self.args['init_cond'] == 'estimated':
 
             with torch.no_grad() :
-                sigma = self.sigma
-                gamma = self.gamma
-                N = self.N
+                sigma = y_pred.sigma
+                gamma = y_pred.gamma
+                N = y_pred.N
                 I0 = self.I0
 
                 hat_I0 = I0  
@@ -234,11 +234,11 @@ class SEIR_pyro :
         
         elif self.args['init_cond'] == 'estimated_roman':
             if sigma == None :
-                sigma = self.sigma
+                sigma = y_pred.sigma
 
-            I0 = self.I0
-            N = self.N
-
+            I0 = self.args['I0'] #self.I0
+            N = y_pred.N
+            #print('** ',data[0], sigma)
             E0 = data[0]/sigma
             R0 = torch.tensor([0], dtype=torch.float32)
             S0 = N - E0 - I0 - R0
@@ -248,7 +248,7 @@ class SEIR_pyro :
             print('init_cond should be fixed or estimated in the configuration file')
             return None
         
-        return torch.tensor([S0, I0, E0, R0])
+        return torch.tensor([S0, E0, I0, R0])
     
     def get_params(self) :
         print(pyro.get_param_store().keys())

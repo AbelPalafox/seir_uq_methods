@@ -83,6 +83,8 @@ class SEIR_mcmc_base(AnalysisTools) :
         
         x0 = self.get_initial_conditions(theta)
 
+        if not np.isfinite(x0).all() :
+            print('*** ', theta, x0)
         x = seir_model.run(x0,t)
         
         S, E, I, R = x[:]

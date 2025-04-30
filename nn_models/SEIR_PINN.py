@@ -14,6 +14,7 @@ class SEIR_PINN(PINN) :
         #torch.manual_seed(123)
         super().__init__(n_input,n_output,n_hidden,n_flayers, **kwargs)
         self.labels = ['beta', 'sigma', 'gamma']
+        #self.args['N'] = kwargs['N']
         return         
 
     def run(self, t, data, x0, params_0 = [], epochs=10000, lr=1e-3, **kwargs) :
@@ -136,10 +137,12 @@ class SEIR_PINN(PINN) :
         I_pred = y_pred[:, 2]
         R_pred = 1 - S_pred - E_pred - I_pred
 
-        dS_dt = torch.autograd.grad(S_pred, t, torch.ones_like(S_pred), create_graph=True)[0]
-        dE_dt = torch.autograd.grad(E_pred, t, torch.ones_like(E_pred), create_graph=True)[0]
-        dI_dt = torch.autograd.grad(I_pred, t, torch.ones_like(I_pred), create_graph=True)[0]
-        dR_dt = torch.autograd.grad(R_pred, t, torch.ones_like(R_pred), create_graph=True)[0]
+        with torch.enable_grad() :
+
+            dS_dt = torch.autograd.grad(S_pred, t, torch.ones_like(S_pred), create_graph=True)[0]
+            dE_dt = torch.autograd.grad(E_pred, t, torch.ones_like(E_pred), create_graph=True)[0]
+            dI_dt = torch.autograd.grad(I_pred, t, torch.ones_like(I_pred), create_graph=True)[0]
+            dR_dt = torch.autograd.grad(R_pred, t, torch.ones_like(R_pred), create_graph=True)[0]
 
         S_pred_denormalized = self.normalizer.denormalize(S_pred)
         E_pred_denormalized = self.normalizer.denormalize(E_pred)

@@ -29,6 +29,8 @@ class pyhmc :
         self.loglikelihood = loglikelihood
         self.logprior = logprior
         self.support = support
+
+        self.out_support = 0
         
         return
     
@@ -37,7 +39,7 @@ class pyhmc :
         if not self.support(theta):
             return 1e8 
         
-        return self.loglikelihood(theta) + self.logprior(theta)
+        return 2*(self.loglikelihood(theta) + self.logprior(theta))/self.params['N']
     
     
     def gradient(self, theta) :
@@ -61,6 +63,8 @@ class pyhmc :
 
         grad = (np.array(U_fw) - np.array(U_bw)) / (2.0*h)
         
+        #print(grad)
+
         return grad
     
     def hessian(self, x0) :
@@ -87,6 +91,40 @@ class pyhmc :
     
 
     def leapfrog(self, q_,p_,WeightInv, U_q_) :
+
+        step_size = self.step_size
+        dim = len(q_)
+        
+        q = np.asarray(q_,dtype=float).copy()
+        p = np.asarray(p_,dtype=float).copy()
+
+        Start_log_p = U_q_  + 0.5* p_ @ WeightInv @ p_
+
+        for _ in range(self.nsteps) :
+            p -= 0.5*step_size*self.gradient(q) 
+
+            q += step_size * WeightInv @ p 
+            if not self.support(q) :
+                q = self.project_params(q)
+            
+            p -= 0.5 * step_size * self.gradient(q) 
+
+            U_q = self.U(q)
+            New_log_p = U_q + 0.5* p @ WeightInv @ p
+
+            if np.log(np.random.rand()) < Start_log_p - New_log_p:
+                return q, U_q, 1
+            
+        U_q = self.U(q)
+        New_log_p = U_q + 0.5* p @ WeightInv @ p
+
+        if np.log(np.random.rand()) < Start_log_p - New_log_p:
+            return q, U_q, 1
+        
+        return q, U_q, 0
+        
+
+    def leapfrog_(self, q_,p_,WeightInv, U_q_) :
         
         #print('entering leapfrog')
         step_size = self.step_size
@@ -98,19 +136,38 @@ class pyhmc :
         p -= step_size * self.gradient(q) / 2.0         # half step
         
         #L = scipy.linalg.cho_factor(Weight, lower=True) 
+        Start_log_p = U_q_ + 0.5* p_ @ WeightInv @ p_
+        
+        if not np.isfinite(p).all() :
+            print(-1)
         
         for _ in range(self.nsteps) :
             q += step_size * WeightInv @ p # whole step
-
+            if not np.isfinite(p).all() or not np.isfinite(q).all():
+                print(0.1, q, WeightInv, p)
             # check for points out of support
             while not self.support(q) :
-                q = q_ + 0.01*np.random.randn(dim)
+                q = q_ + step_size*np.random.randn(dim)
+                self.out_support += 1
 
             p -= step_size * self.gradient(q)           # whole step
-        
+
+            if not np.isfinite(p).all() or not np.isfinite(q).all() :
+                print(0.2, q, WeightInv, p, self.gradient(q))
+
+            U_q = self.U(q)
+            New_log_p = U_q + 0.5* p @ WeightInv @ p
+            #print(f'*** {_}: ', Start_log_p - New_log_p, Start_log_p, New_log_p)
+            if np.log(np.random.rand()) < Start_log_p - New_log_p:
+                return q, U_q, 1
+
+        if not np.isfinite(p).all() :
+            print(0)
+
         q += step_size * WeightInv @ p     # whole step
         while not self.support(q) :
-            q = q_ + 0.01*np.random.randn(dim)
+            q = q_ + step_size*np.random.randn(dim)
+            self.out_support += 1
 
         p -= step_size * self.gradient(q) / 2.0         # half step
     
@@ -118,9 +175,16 @@ class pyhmc :
         Start_log_p = U_q_ + 0.5* p_ @ WeightInv @ p_
         New_log_p = U_q + 0.5* p @ WeightInv @ p
         
+        if not np.isfinite(q).all() :
+            print(1)
+
+        if not np.isfinite(WeightInv).all() :
+            print(2)
+
         if np.log(np.random.rand()) < Start_log_p - New_log_p:
             return q, U_q, 1
         else:
+            
             return q, U_q, 0
         
     def Run(self, n_samples, theta_0) :
@@ -153,7 +217,8 @@ class pyhmc :
             Value
             )
         #print('** ', theta_0)
-        
+        self.reject_counter = 0
+    
         samples.append(q_new)
         U_new = U_q_new
         
@@ -164,9 +229,9 @@ class pyhmc :
         
         for i in range(n_samples) :
             
-            print(f'iteration: {i}')
+            #print(f'iteration: {i}')
             
-            theta = samples[-1]
+            theta = samples[-1].copy()
             
             #ini_time = time()
             Weight, WeightInv = self.get_weight_matrix_inv(theta)
@@ -180,12 +245,12 @@ class pyhmc :
                 theta,
                 p0,
                 WeightInv,
-                U_samples[-1]
+                U_samples[-1].copy()
                 )
             end_time = time()
             #print(f'elapsed time leapfrog: {end_time - ini_time}')
             U_new = U_q_new
-            
+            #print(U_new, Value)
             if U_new < Value :
                 Opt = q_new
                 Value = U_new
@@ -194,11 +259,12 @@ class pyhmc :
                 samples.append(q_new)
                 U_samples.append(U_new)
             else :
-                samples.append(theta)
+                self.reject_counter += 1
+                samples.append(samples[-1])
                 U_samples.append(U_samples[-1])
             
-            if i%100 == 0 :
-                print(q_new, U_samples[-1])
+            if i%50 == 0 :
+                print(samples[-1], U_samples[-1], self.reject_counter, self.out_support)
             yield 
             
         self.Output = np.asarray(samples)
@@ -210,14 +276,24 @@ class pyhmc :
         
         H = self.hessian(theta)
         
+        if not np.isfinite(H).all() :
+            return np.eye(self.ndim), np.eye(self.ndim)
         #print(H)
 
         AutoVal, AutoVect = linalg.eig(H)
         
+        if np.iscomplex(AutoVal).any() :
+            print('1')
+            AutoVal = np.abs(AutoVal)
+            AutoVal = np.clip(AutoVal, 1e-6, None)
+            return AutoVal*np.eye(self.ndim), np.eye(self.ndim)/AutoVal
+
         AutoVal = np.abs(AutoVal)
 
-        if np.any(AutoVal <1e-6) :
-            return np.eye(self.ndim), np.eye(self.ndim)
+        if np.any(np.abs(AutoVal) <1e-6) :
+            print(2)
+            AutoVal = np.clip(AutoVal, 1e-6, None)
+            return AutoVal*np.eye(self.ndim), np.eye(self.ndim)/AutoVal
         
         return AutoVect @ np.diag(AutoVal) @ AutoVect.T, AutoVect @ np.diag(1.0/AutoVal) @ AutoVect.T
         
