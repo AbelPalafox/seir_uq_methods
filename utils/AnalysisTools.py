@@ -211,13 +211,15 @@ class AnalysisTools :
                                  hdi_prob=0.94,  # Intervalo de alta densidad (HDI)
                                  point_estimate="median",  # Muestra la mediana
                                  #ref_val=0,  # Línea vertical en 0 como referencia
-                                 rope=[0, 0.5],  # Opcional, agrega ROPE
+                                 #rope=[0, 0.5],  # Opcional, agrega ROPE
                                  )
             
             ax_t[i,1].set_title(ax_t[i,1].get_title(), fontsize=14) 
             ax_t[i,1].tick_params(axis='both', labelsize=14) 
+            ax_t[i,0].set_xlim(0,0.5)
             
         plt.tight_layout() 
+
         plt.savefig(self.outpath+'/'+self.instance+'/'+self.instance+'_trace_plots.png',dpi=300)    
         plt.show()
 
@@ -445,25 +447,32 @@ class AnalysisTools :
 
         posterior_predictive = self.generate_from_simulated_data(n)
 
-        #print('**** ', posterior_predictive.shape)
-
         q25 = np.quantile(posterior_predictive, 0.25, axis=0)
         q75 = np.quantile(posterior_predictive, 0.75, axis=0)
+        #m = posterior_predictive.shape[1]
+
+        #q25 = np.zeros(m)
+        #q75 = np.zeros(m)
+
+        #for t in range(m) :
+        #    q25[t] = np.percentile(posterior_predictive[:,t],25)
+        #    q75[t] = np.percentile(posterior_predictive[:,t],75)
+        
         median = np.median(posterior_predictive, axis=0)
         mean_predictive = np.mean(posterior_predictive, axis=0)
 
         map_theta, map_estimate = self.get_map() 
 
-        plt.figure(figsize=(4.5,3))
+        plt.figure(figsize=(6.,4.0))
         plt.plot(self.time, self.data, label='Data')
         plt.plot(self.time, posterior_predictive.T, alpha=0.2, lw=0.25, color='gray')
         #for curve in posterior_predictive :
         #    plt.plot(self.time, curve, alpha=0.2, lw=0.25, color='gray')
         plt.plot([], [], alpha=0.2, lw=1, color='gray',label='Probability region')
         #plt.plot(self.time, posterior_predictive, alpha=0.2, lw=3, color='gray',label='Probability region')
-        plt.plot(self.time, mean_predictive, color='tab:orange', lw=2, alpha=0.8, label='Predictive mean')
-        plt.plot(self.time, map_estimate, '--', color='tab:green', lw=2, label='MAP estimate')
-        plt.fill_between(self.time, q25, q75, color="skyblue", alpha=0.3, label="IQR (25%-75%)")
+        plt.plot(self.time, mean_predictive, color='tab:orange', lw=2, alpha=0.8, label='Predictive mean',zorder=11)
+        plt.plot(self.time, map_estimate, '--', color='tab:green', lw=2, label='MAP estimate',zorder=12)
+        plt.fill_between(self.time, q25, q75, color="skyblue", alpha=0.5, label="IQR (25%-75%)", zorder=10)
         plt.grid()
         plt.legend()
         plt.savefig(self.outpath+'/'+self.instance+'/'+self.instance+'_probability_region.png',dpi=300)
