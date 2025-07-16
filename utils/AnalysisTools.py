@@ -460,8 +460,21 @@ class AnalysisTools :
         
         median = np.median(posterior_predictive, axis=0)
         mean_predictive = np.mean(posterior_predictive, axis=0)
+        std_predictive = np.std(posterior_predictive, axis=0)
 
         map_theta, map_estimate = self.get_map() 
+
+        print(f'RMSE mean: {np.sqrt(np.mean((self.data - mean_predictive)**2))}')
+        print(f'RMSE median: {np.sqrt(np.mean((self.data - median)**2))}')
+        print(f'RMSE MAP: {np.sqrt(np.mean((self.data - map_estimate)**2))}')
+        
+        # computing the coverage credible interval
+        coverage = np.mean((self.data >= q25) & (self.data <= q75))
+        print(f'Coverage of the 25%-75% credible interval: {coverage:.2f}')
+        q2_5 = np.quantile(posterior_predictive, 0.025, axis=0)
+        q97_5 = np.quantile(posterior_predictive, 0.975, axis=0)
+        coverage = np.mean((self.data >= q2_5) & (self.data <= q97_5))
+        print(f'Coverage of the 2.5%-97_5% credible interval: {coverage:.2f}')
 
         plt.figure(figsize=(6.,4.0))
         plt.plot(self.time, self.data, label='Data')
@@ -473,6 +486,7 @@ class AnalysisTools :
         plt.plot(self.time, mean_predictive, color='tab:orange', lw=2, alpha=0.8, label='Predictive mean',zorder=11)
         plt.plot(self.time, map_estimate, '--', color='tab:green', lw=2, label='MAP estimate',zorder=12)
         plt.fill_between(self.time, q25, q75, color="skyblue", alpha=0.5, label="IQR (25%-75%)", zorder=10)
+        #plt.fill_between(self.time, mean_predictive-std_predictive, mean_predictive + std_predictive, color="skyblue", alpha=0.5, label="Mean + STD", zorder=13)
         plt.grid()
         plt.legend()
         plt.savefig(self.outpath+'/'+self.instance+'/'+self.instance+'_probability_region.png',dpi=300)
